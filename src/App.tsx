@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import {
   CAMERA_VISUAL,
+  CANVAS,
   MAX_VISIBLE_SIBLINGS,
   NODE_WIDTH_BY_KIND,
 } from "./config/constants";
@@ -11,9 +12,14 @@ import { GraphCanvas } from "./components/GraphCanvas";
 import { GraphFooter } from "./components/GraphFooter";
 import { useGraphController } from "./hooks/useGraphController";
 import { getDepthVisual } from "./lib/graphVisuals";
+import { computeLayoutTopology } from "./lib/layoutEngine";
+import type { LayoutFrame, LayoutTopology } from "./lib/layoutEngine";
 import { useGraphStore } from "./state/graphStore";
-import type { SemanticNodeType } from "./types/graph";
-import { computeLayoutFrame } from "./lib/layoutEngine";
+import type {
+  GraphNodeEntity,
+  PositionedNode,
+  SemanticNodeType,
+} from "./types/graph";
 import { LogoIcon } from "./assets/LogoIcon";
 
 const NODE_TYPE_FILTERS: SemanticNodeType[] = [
@@ -29,6 +35,19 @@ const STORAGE_KEYS = {
   connectionDepth: "code-visual:connectionDepth",
   nodeTypeFilters: "code-visual:nodeTypeFilters",
 } as const;
+
+const EMPTY_FRAME: LayoutFrame = { nodes: [], edges: [] };
+
+type PendingLayout = {
+  topology: LayoutTopology;
+  filteredNodesById: Record<string, GraphNodeEntity>;
+};
+
+type WorkerResponse = {
+  type: "POSITIONS";
+  requestId: number;
+  positionedById: Record<string, { x: number; y: number }>;
+};
 
 function readStoredNumber(key: string, fallback: number): number {
   if (typeof window === "undefined") return fallback;
@@ -93,11 +112,17 @@ function App() {
   const [nodeTypeFilters, setNodeTypeFilters] = useState(() =>
     readStoredNodeTypeFilters(),
   );
-  const [renderFrame, setRenderFrame] = useState(graphState.frame);
+
+  // G: stable target frame (async, set by worker response)
+  const [filteredLayoutFrame, setFilteredLayoutFrame] =
+    useState<LayoutFrame>(EMPTY_FRAME);
+  // animated interpolation frame (drives node positions during transitions)
+  const [renderFrame, setRenderFrame] = useState<LayoutFrame>(EMPTY_FRAME);
   const [activeDraggedNodeId, setActiveDraggedNodeId] = useState<string | null>(
     null,
   );
-  const renderFrameRef = useRef(graphState.frame);
+
+  const renderFrameRef = useRef<LayoutFrame>(EMPTY_FRAME);
   const canvasRef = useRef<HTMLElement | null>(null);
   const cameraAnimationRef = useRef<number | null>(null);
   const layoutAnimationRef = useRef<number | null>(null);
@@ -120,6 +145,15 @@ function App() {
     moved: false,
   });
   const suppressClickRef = useRef<string | null>(null);
+
+  // B: ref to stable layout frame for camera effect — avoids positionById dep
+  const layoutFrameRef = useRef<LayoutFrame>(EMPTY_FRAME);
+  layoutFrameRef.current = filteredLayoutFrame;
+
+  // G: worker refs
+  const workerRef = useRef<Worker | null>(null);
+  const workerRequestIdRef = useRef(0);
+  const pendingLayoutRef = useRef<PendingLayout | null>(null);
 
   const stopAllDragging = () => {
     draggingRef.current.active = false;
@@ -217,9 +251,73 @@ function App() {
     }
   }, [nodeTypeFilters]);
 
-  const filteredLayoutFrame = useMemo(() => {
+  // G: initialize the layout worker once
+  useEffect(() => {
+    const worker = new Worker(
+      new URL("./lib/layoutWorker.ts", import.meta.url),
+      { type: "module" },
+    );
+    workerRef.current = worker;
+
+    worker.addEventListener(
+      "message",
+      (event: MessageEvent<WorkerResponse>) => {
+        const { type, requestId, positionedById } = event.data;
+        if (type !== "POSITIONS") return;
+        // discard stale responses from superseded requests
+        if (requestId !== workerRequestIdRef.current) return;
+
+        const pending = pendingLayoutRef.current;
+        if (!pending) return;
+
+        const { topology, filteredNodesById } = pending;
+        const manualPositions = useGraphStore.getState().manualPositions;
+        const centerX = CANVAS.width / 2;
+        const centerY = CANVAS.height / 2;
+
+        const positionedNodes = topology.visibleNodeIds.reduce<
+          PositionedNode[]
+        >((acc, id) => {
+          const node = filteredNodesById[id];
+          if (!node) return acc;
+          const pos = positionedById[id];
+          acc.push({
+            id: node.id,
+            label: node.label,
+            kind: node.kind,
+            semanticType: node.semanticType,
+            depth: topology.depthByNodeId[id] ?? 0,
+            x: manualPositions[id]?.x ?? pos?.x ?? centerX,
+            y: manualPositions[id]?.y ?? pos?.y ?? centerY,
+            loading: node.loading,
+            error: node.error,
+          });
+          return acc;
+        }, []);
+
+        // same sort order as layoutEngine.ts depthSort
+        positionedNodes.sort(
+          (a, b) => a.depth - b.depth || a.label.localeCompare(b.label),
+        );
+
+        setFilteredLayoutFrame({
+          nodes: positionedNodes,
+          edges: topology.visibleEdges,
+        });
+      },
+    );
+
+    return () => {
+      worker.terminate();
+      workerRef.current = null;
+    };
+  }, []); // run once
+
+  // C: narrow deps — exclude viewport so pan/zoom don't trigger layout
+  // A: use explicit store fields, not the full graphState object
+  const pendingLayout = useMemo((): PendingLayout | null => {
     const rootNodeId = graphState.focusedNodeId ?? graphState.rootNodeId;
-    if (!rootNodeId) return { nodes: [], edges: [] };
+    if (!rootNodeId) return null;
 
     const excludedNodeIds = new Set<string>();
 
@@ -239,7 +337,7 @@ function App() {
     });
 
     const filteredNodesById = Object.entries(graphState.nodesById).reduce<
-      typeof graphState.nodesById
+      Record<string, GraphNodeEntity>
     >((acc, [nodeId, node]) => {
       if (!excludedNodeIds.has(nodeId)) {
         acc[nodeId] = node;
@@ -271,41 +369,60 @@ function App() {
       {},
     );
 
-    const filteredManualPositions = Object.entries(
-      graphState.manualPositions,
-    ).reduce<typeof graphState.manualPositions>((acc, [nodeId, position]) => {
-      if (visibleNodeIds.has(nodeId)) {
-        acc[nodeId] = position;
-      }
-      return acc;
-    }, {});
-
-    return computeLayoutFrame({
+    // topology = synchronous BFS only, no force simulation (G)
+    const topology = computeLayoutTopology({
       rootNodeId,
       connectionDepth: graphState.connectionDepth,
       nodesById: filteredNodesById,
       edgesById: filteredEdgesById,
       childIdsByParent: filteredChildrenByParent,
       siblingPageByParent: graphState.siblingPageByParent,
-      manualPositions: filteredManualPositions,
+      manualPositions: {}, // not used by topology BFS
     });
-  }, [graphState, nodeTypeFilters]);
 
-  const positionById = useMemo(() => {
-    const map: Record<string, { x: number; y: number }> = {};
-    renderFrame.nodes.forEach((node) => {
-      map[node.id] = { x: node.x, y: node.y };
+    if (!topology) return null;
+
+    return { topology, filteredNodesById };
+  }, [
+    // C: explicit fields — viewport excluded
+    graphState.nodesById,
+    graphState.edgesById,
+    graphState.childIdsByParent,
+    graphState.focusedNodeId,
+    graphState.rootNodeId,
+    graphState.connectionDepth,
+    graphState.siblingPageByParent,
+    nodeTypeFilters,
+  ]);
+
+  // G: post to worker whenever topology changes
+  useEffect(() => {
+    if (!pendingLayout || !workerRef.current) return;
+
+    const requestId = ++workerRequestIdRef.current;
+    pendingLayoutRef.current = pendingLayout;
+
+    const { topology, filteredNodesById } = pendingLayout;
+    workerRef.current.postMessage({
+      type: "LAYOUT",
+      requestId,
+      visibleNodeIds: topology.visibleNodeIds,
+      depthByNodeId: topology.depthByNodeId,
+      nodesById: filteredNodesById,
+      childIdsByParent: topology.childIdsByParent,
+      edges: topology.visibleEdges,
+      rootNodeId: topology.rootNodeId,
     });
-    return map;
-  }, [renderFrame.nodes]);
+  }, [pendingLayout]);
 
+  // D: depthById from filteredLayoutFrame (not store's removed frame field)
   const depthById = useMemo(() => {
     const map: Record<string, number> = {};
-    graphState.frame.nodes.forEach((node) => {
+    filteredLayoutFrame.nodes.forEach((node) => {
       map[node.id] = node.depth;
     });
     return map;
-  }, [graphState.frame.nodes]);
+  }, [filteredLayoutFrame.nodes]);
 
   const activeProjectId = graphState.projectId ?? "";
   const selectedNodeId = graphState.selectedNodeId;
@@ -318,9 +435,10 @@ function App() {
         ? { label: "Disconnected", tone: "disconnected" as const }
         : { label: "Connected", tone: "connected" as const };
 
+  // A: depend on filteredLayoutFrame.edges (stable target), not renderFrame.edges
   const loopBridgeNodeById = useMemo(() => {
     const neighborById: Record<string, string[]> = {};
-    renderFrame.edges.forEach((edge) => {
+    filteredLayoutFrame.edges.forEach((edge) => {
       neighborById[edge.source] = neighborById[edge.source] ?? [];
       neighborById[edge.target] = neighborById[edge.target] ?? [];
       neighborById[edge.source].push(edge.target);
@@ -347,19 +465,42 @@ function App() {
     });
 
     return result;
-  }, [depthById, renderFrame.edges]);
+  }, [depthById, filteredLayoutFrame.edges]);
 
-  const adjacencyByNode = useMemo(() => {
-    const adjacency: Record<string, string[]> = {};
-    renderFrame.edges.forEach((edge) => {
-      adjacency[edge.source] = adjacency[edge.source] ?? [];
-      adjacency[edge.target] = adjacency[edge.target] ?? [];
-      adjacency[edge.source].push(edge.target);
-      adjacency[edge.target].push(edge.source);
+  // A: depend on filteredLayoutFrame.edges (stable target), not renderFrame.edges
+  const selectedRelativeNodeById = useMemo(() => {
+    const result: Record<string, boolean> = {};
+    const selectedId = selectedNodeId;
+    if (!selectedId) return result;
+
+    filteredLayoutFrame.edges.forEach((edge) => {
+      if (edge.source === selectedId) {
+        result[edge.target] = true;
+      }
+      if (edge.target === selectedId) {
+        result[edge.source] = true;
+      }
     });
-    return adjacency;
-  }, [renderFrame.edges]);
 
+    return result;
+  }, [filteredLayoutFrame.edges, selectedNodeId]);
+
+  // A: depend on filteredLayoutFrame.edges (stable target), not renderFrame.edges
+  const selectedRelativeEdgeById = useMemo(() => {
+    const result: Record<string, boolean> = {};
+    const selectedId = selectedNodeId;
+    if (!selectedId) return result;
+
+    filteredLayoutFrame.edges.forEach((edge) => {
+      if (edge.source === selectedId || edge.target === selectedId) {
+        result[edge.id] = true;
+      }
+    });
+
+    return result;
+  }, [filteredLayoutFrame.edges, selectedNodeId]);
+
+  // F: collectDragPropagationUpdates reads adjacency from store (no useMemo rebuild)
   const collectDragPropagationUpdates = (params: {
     nodeId: string;
     deltaX: number;
@@ -370,28 +511,38 @@ function App() {
     const { nodeId, deltaX, deltaY, sourcePosition, basePositionsById } =
       params;
 
-    const sourceNode = renderFrame.nodes.find((node) => node.id === nodeId);
+    const currentNodes = renderFrameRef.current.nodes;
+    const sourceNode = currentNodes.find((node) => node.id === nodeId);
     if (!sourceNode) return {};
 
+    const snapshot = useGraphStore.getState();
     const sourceScale = getDepthVisual(sourceNode.depth).scale;
     const sourceCanvasWidth =
       NODE_WIDTH_BY_KIND[sourceNode.kind] *
       sourceScale *
-      graphState.viewport.scale;
-    const maxCanvasDistancePx = Math.max(32, sourceCanvasWidth * 2);
+      snapshot.viewport.scale;
+    const sourceDepth = depthById[nodeId] ?? sourceNode.depth;
+    const maxCanvasDistancePx = Math.max(
+      72,
+      sourceCanvasWidth *
+        (2.4 + Math.max(0, snapshot.connectionDepth - 1) * 0.55),
+    );
+
+    // F: read adjacency from store, not a rebuilt useMemo
+    const storeAdjacency = snapshot.adjacencyByNode;
 
     const updates: Record<string, { x: number; y: number }> = {};
-    const queue: Array<{ id: string; transmission: number }> = [
-      { id: nodeId, transmission: 1 },
+    const queue: Array<{ id: string; transmission: number; depth: number }> = [
+      { id: nodeId, transmission: 1, depth: sourceDepth },
     ];
     const visited = new Set<string>([nodeId]);
-    const minInfluence = 0.006;
+    const minInfluence = 0.004;
 
     while (queue.length > 0) {
       const current = queue.shift();
       if (!current) continue;
 
-      const neighbors = adjacencyByNode[current.id] ?? [];
+      const neighbors = storeAdjacency[current.id] ?? [];
       neighbors.forEach((neighborId) => {
         if (visited.has(neighborId)) return;
         visited.add(neighborId);
@@ -399,10 +550,15 @@ function App() {
         const neighborPosition = basePositionsById[neighborId];
         if (!neighborPosition) return;
 
+        const neighborDepth = depthById[neighborId] ?? current.depth;
+        const depthDeltaFromSource = Math.max(0, neighborDepth - sourceDepth);
+        const isDeeperThanCurrent = neighborDepth > current.depth;
+        const isShallowerThanCurrent = neighborDepth < current.depth;
+
         const distX = neighborPosition.x - sourcePosition.x;
         const distY = neighborPosition.y - sourcePosition.y;
         const worldDistance = Math.hypot(distX, distY);
-        const canvasDistance = worldDistance * graphState.viewport.scale;
+        const canvasDistance = worldDistance * snapshot.viewport.scale;
         if (canvasDistance > maxCanvasDistancePx) return;
 
         const normalizedDistance = Math.min(
@@ -410,10 +566,24 @@ function App() {
           Math.max(0, canvasDistance / maxCanvasDistancePx),
         );
         const squareFalloff = Math.pow(1 - normalizedDistance, 2);
-        const influence = 0.95 * squareFalloff * current.transmission;
+        const depthUniformBoost =
+          1 + Math.min(0.55, depthDeltaFromSource * 0.14);
+        const directionBias = isDeeperThanCurrent
+          ? 1.12
+          : isShallowerThanCurrent
+            ? 0.82
+            : 1;
+        const influence = Math.min(
+          1,
+          1 *
+            squareFalloff *
+            current.transmission *
+            depthUniformBoost *
+            directionBias,
+        );
         if (influence < minInfluence) return;
 
-        const smoothFactor = 0.88;
+        const smoothFactor = Math.min(0.99, 0.96 + depthDeltaFromSource * 0.01);
         const moveX = deltaX * influence * smoothFactor;
         const moveY = deltaY * influence * smoothFactor;
 
@@ -424,7 +594,9 @@ function App() {
 
         queue.push({
           id: neighborId,
-          transmission: current.transmission * 0.78,
+          transmission:
+            current.transmission * (isShallowerThanCurrent ? 0.86 : 0.95),
+          depth: neighborDepth,
         });
       });
     }
@@ -432,37 +604,7 @@ function App() {
     return updates;
   };
 
-  const selectedRelativeNodeById = useMemo(() => {
-    const result: Record<string, boolean> = {};
-    const selectedId = selectedNodeId;
-    if (!selectedId) return result;
-
-    renderFrame.edges.forEach((edge) => {
-      if (edge.source === selectedId) {
-        result[edge.target] = true;
-      }
-      if (edge.target === selectedId) {
-        result[edge.source] = true;
-      }
-    });
-
-    return result;
-  }, [renderFrame.edges, selectedNodeId]);
-
-  const selectedRelativeEdgeById = useMemo(() => {
-    const result: Record<string, boolean> = {};
-    const selectedId = selectedNodeId;
-    if (!selectedId) return result;
-
-    renderFrame.edges.forEach((edge) => {
-      if (edge.source === selectedId || edge.target === selectedId) {
-        result[edge.id] = true;
-      }
-    });
-
-    return result;
-  }, [renderFrame.edges, selectedNodeId]);
-
+  // layout animation: interpolate renderFrame toward filteredLayoutFrame
   useEffect(() => {
     const targetFrame = filteredLayoutFrame;
     const currentFrame = renderFrameRef.current;
@@ -515,7 +657,8 @@ function App() {
     const tick = (timestamp: number) => {
       const elapsed = timestamp - start;
       const t = Math.min(1, elapsed / durationMs);
-      const k = t;
+      // L: cubic ease-in-out instead of linear
+      const k = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
       const interpolatedNodes = targetFrame.nodes.map((targetNode) => {
         const current = currentById[targetNode.id];
@@ -568,12 +711,16 @@ function App() {
     Math.ceil(selectedNodeTotal / MAX_VISIBLE_SIBLINGS),
   );
 
+  // B: camera reads position from layoutFrameRef (always current, no positionById dep)
+  // filteredLayoutFrame dep added to handle initial data load (fires once per worker result)
   useEffect(() => {
     const focusId = focusedNodeId;
     if (!focusId) return;
 
-    const focusPosition = positionById[focusId];
-    if (!focusPosition || !canvasRef.current) return;
+    const focusNode = layoutFrameRef.current.nodes.find(
+      (n) => n.id === focusId,
+    );
+    if (!focusNode || !canvasRef.current) return;
     if (draggingRef.current.active || nodeDragRef.current.active) return;
 
     stopCameraAnimation();
@@ -583,15 +730,16 @@ function App() {
     const scale = snapshot.viewport.scale;
     const startX = snapshot.viewport.x;
     const startY = snapshot.viewport.y;
-    const targetX = rect.width / 2 - focusPosition.x * scale;
-    const targetY = rect.height / 2 - focusPosition.y * scale;
+    const targetX = rect.width / 2 - focusNode.x * scale;
+    const targetY = rect.height / 2 - focusNode.y * scale;
     const duration = CAMERA_VISUAL.focusDurationMs * motionSpeedFactor * 0.7;
     const start = performance.now();
 
     const animate = (timestamp: number) => {
       const elapsed = timestamp - start;
       const t = Math.min(1, elapsed / duration);
-      const k = t;
+      // L: cubic ease-in-out
+      const k = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
       useGraphStore.getState().setViewport({
         scale,
@@ -611,7 +759,7 @@ function App() {
     return () => {
       stopCameraAnimation();
     };
-  }, [focusedNodeId, motionSpeedFactor, positionById]);
+  }, [focusedNodeId, motionSpeedFactor, filteredLayoutFrame]); // B: no positionById
 
   return (
     <main className="app-shell theme-neumorph">
@@ -694,8 +842,11 @@ function App() {
           if (nodeDragRef.current.active && nodeDragRef.current.nodeId) {
             const nodeId = nodeDragRef.current.nodeId;
             const snapshot = useGraphStore.getState();
+            const currentNodes = renderFrameRef.current.nodes;
+            const currentNode = currentNodes.find((n) => n.id === nodeId);
             const currentPosition =
-              snapshot.manualPositions[nodeId] ?? positionById[nodeId];
+              snapshot.manualPositions[nodeId] ??
+              (currentNode ? { x: currentNode.x, y: currentNode.y } : null);
             if (!currentPosition) return;
 
             const deltaX =
@@ -716,7 +867,7 @@ function App() {
               y: currentPosition.y + deltaY,
             };
 
-            const basePositionsById = renderFrame.nodes.reduce<
+            const basePositionsById = currentNodes.reduce<
               Record<string, { x: number; y: number }>
             >((acc, node) => {
               const manualPosition = snapshot.manualPositions[node.id];
@@ -734,9 +885,23 @@ function App() {
               basePositionsById,
             });
 
-            graphState.setManualPositionsBatch({
+            const allPositionUpdates = {
               [nodeId]: sourceNextPosition,
               ...neighborUpdates,
+            };
+
+            graphState.setManualPositionsBatch(allPositionUpdates);
+
+            // Directly update filteredLayoutFrame for edge anchors during drag
+            setFilteredLayoutFrame((prev) => {
+              if (prev.nodes.length === 0) return prev;
+              return {
+                nodes: prev.nodes.map((n) => {
+                  const pos = allPositionUpdates[n.id];
+                  return pos ? { ...n, x: pos.x, y: pos.y } : n;
+                }),
+                edges: prev.edges,
+              };
             });
 
             return;

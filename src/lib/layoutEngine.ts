@@ -39,6 +39,15 @@ export type LayoutFrame = {
   edges: PositionedEdge[];
 };
 
+// G: topology result (BFS output, no force positions)
+export type LayoutTopology = {
+  visibleNodeIds: string[];
+  depthByNodeId: Record<string, number>;
+  childIdsByParent: Record<string, string[]>;
+  visibleEdges: PositionedEdge[];
+  rootNodeId: string;
+};
+
 type ForceNode = SimulationNodeDatum & {
   id: string;
   depth: number;
@@ -48,16 +57,10 @@ type ForceNode = SimulationNodeDatum & {
   targetY: number;
 };
 
-type ForceLink = SimulationLinkDatum<ForceNode> & {
+type ForceLinkDatum = SimulationLinkDatum<ForceNode> & {
   source: string | ForceNode;
   target: string | ForceNode;
 };
-
-function depthSort(nodes: PositionedNode[]): PositionedNode[] {
-  return [...nodes].sort(
-    (a, b) => a.depth - b.depth || a.label.localeCompare(b.label),
-  );
-}
 
 function createDeterministicRandom(seed = 137): () => number {
   let value = seed;
@@ -72,47 +75,36 @@ function computeInitialAngle(index: number, size: number): number {
   return -Math.PI / 2 + (Math.PI * 2 * index) / size;
 }
 
-function buildChildrenByParent(
-  parentByNodeId: Record<string, string | null>,
-  nodesById: Record<string, GraphNodeEntity>,
-) {
-  const childrenByParent: Record<string, string[]> = {};
-  Object.entries(parentByNodeId).forEach(([nodeId, parentId]) => {
-    if (!parentId || !nodesById[nodeId]) return;
-    childrenByParent[parentId] = childrenByParent[parentId] ?? [];
-    childrenByParent[parentId].push(nodeId);
-  });
-
-  Object.keys(childrenByParent).forEach((parentId) => {
-    childrenByParent[parentId].sort((a, b) =>
-      (nodesById[a]?.label ?? a).localeCompare(nodesById[b]?.label ?? b),
-    );
-  });
-
-  return childrenByParent;
-}
-
 function computeSubtreeWeight(
   nodeId: string,
   childrenByParent: Record<string, string[]>,
   cache: Record<string, number>,
+  visiting: Set<string> = new Set(),
 ): number {
   const cached = cache[nodeId];
   if (typeof cached === "number") return cached;
 
+  if (visiting.has(nodeId)) {
+    return 1;
+  }
+
+  visiting.add(nodeId);
+
   const children = childrenByParent[nodeId] ?? [];
   if (children.length === 0) {
     cache[nodeId] = 1;
+    visiting.delete(nodeId);
     return 1;
   }
 
   const childrenWeight = children.reduce(
     (sum, childId) =>
-      sum + computeSubtreeWeight(childId, childrenByParent, cache),
+      sum + computeSubtreeWeight(childId, childrenByParent, cache, visiting),
     0,
   );
   const weight = 1 + childrenWeight;
   cache[nodeId] = weight;
+  visiting.delete(nodeId);
   return weight;
 }
 
@@ -124,9 +116,20 @@ function buildTargetAngleById(params: {
   const angleById: Record<string, number> = { [rootNodeId]: -Math.PI / 2 };
   const subtreeCache: Record<string, number> = {};
 
-  const assign = (nodeId: string, startAngle: number, endAngle: number) => {
+  const assign = (
+    nodeId: string,
+    startAngle: number,
+    endAngle: number,
+    traversalPath: Set<string> = new Set(),
+  ) => {
+    if (traversalPath.has(nodeId)) return;
+
+    traversalPath.add(nodeId);
     const children = childrenByParent[nodeId] ?? [];
-    if (children.length === 0) return;
+    if (children.length === 0) {
+      traversalPath.delete(nodeId);
+      return;
+    }
 
     const weightedChildren = children.map((childId) => ({
       id: childId,
@@ -143,9 +146,11 @@ function buildTargetAngleById(params: {
       const childEnd = cursor + slice;
       const childAngle = childStart + slice / 2;
       angleById[child.id] = childAngle;
-      assign(child.id, childStart, childEnd);
+      assign(child.id, childStart, childEnd, traversalPath);
       cursor = childEnd;
     });
+
+    traversalPath.delete(nodeId);
   };
 
   assign(rootNodeId, -Math.PI, Math.PI);
@@ -197,19 +202,24 @@ function buildDepthRingRadius(params: {
   return ringRadiusByDepth;
 }
 
-function computeForcePositions(params: {
+// E: uses childIdsByParent directly instead of rebuilding from parentByNodeId
+export type ForcePositionInput = {
   visibleNodeIds: Set<string>;
   depthByNodeId: Record<string, number>;
   nodesById: Record<string, GraphNodeEntity>;
-  parentByNodeId: Record<string, string | null>;
+  childIdsByParent: Record<string, string[]>;
   edges: PositionedEdge[];
   rootNodeId: string;
-}): Record<string, { x: number; y: number }> {
+};
+
+export function computeForcePositions(
+  params: ForcePositionInput,
+): Record<string, { x: number; y: number }> {
   const {
     visibleNodeIds,
     depthByNodeId,
     nodesById,
-    parentByNodeId,
+    childIdsByParent,
     edges,
     rootNodeId,
   } = params;
@@ -222,10 +232,10 @@ function computeForcePositions(params: {
     return (nodesById[a]?.label ?? a).localeCompare(nodesById[b]?.label ?? b);
   });
 
-  const childrenByParent = buildChildrenByParent(parentByNodeId, nodesById);
+  // E: pass childIdsByParent directly to buildTargetAngleById
   const targetAngleById = buildTargetAngleById({
     rootNodeId,
-    childrenByParent,
+    childrenByParent: childIdsByParent,
   });
   const ringRadiusByDepth = buildDepthRingRadius({
     visibleNodeIds: orderedNodeIds,
@@ -251,7 +261,7 @@ function computeForcePositions(params: {
         (NODE_WIDTH_BY_KIND[node.kind] * depthVisual.scale) / 2,
         (NODE_HEIGHT_BY_KIND[node.kind] * depthVisual.scale) / 2,
       );
-      const childCount = (childrenByParent[nodeId] ?? []).length;
+      const childCount = (childIdsByParent[nodeId] ?? []).length;
       const depthNodes = nodesAtDepth[depth] ?? [];
       const depthIndex = Math.max(0, depthNodes.indexOf(nodeId));
       const depthBandRadius = ringRadiusByDepth[depth] ?? 0;
@@ -274,7 +284,7 @@ function computeForcePositions(params: {
     })
     .filter((node): node is ForceNode => node !== null);
 
-  const forceLinks: ForceLink[] = edges.map((edge) => ({
+  const forceLinks: ForceLinkDatum[] = edges.map((edge) => ({
     source: edge.source,
     target: edge.target,
   }));
@@ -324,7 +334,7 @@ function computeForcePositions(params: {
     )
     .force(
       "link",
-      forceLink<ForceNode, ForceLink>(forceLinks)
+      forceLink<ForceNode, ForceLinkDatum>(forceLinks)
         .id((node) => node.id)
         .distance((link) => {
           const sourceDepth =
@@ -375,7 +385,16 @@ function computeForcePositions(params: {
   return positionedById;
 }
 
-export function computeLayoutFrame(input: LayoutInput): LayoutFrame {
+function depthSort(nodes: PositionedNode[]): PositionedNode[] {
+  return [...nodes].sort(
+    (a, b) => a.depth - b.depth || a.label.localeCompare(b.label),
+  );
+}
+
+// G: synchronous BFS + edge collection, no force simulation
+export function computeLayoutTopology(
+  input: LayoutInput,
+): LayoutTopology | null {
   const {
     rootNodeId,
     connectionDepth,
@@ -383,12 +402,9 @@ export function computeLayoutFrame(input: LayoutInput): LayoutFrame {
     edgesById,
     childIdsByParent,
     siblingPageByParent,
-    manualPositions,
   } = input;
 
-  if (!rootNodeId || !nodesById[rootNodeId]) {
-    return { nodes: [], edges: [] };
-  }
+  if (!rootNodeId || !nodesById[rootNodeId]) return null;
 
   const visibleNodeIds = new Set<string>();
   const depthByNodeId: Record<string, number> = {};
@@ -396,8 +412,9 @@ export function computeLayoutFrame(input: LayoutInput): LayoutFrame {
   const queue: Array<{ id: string; depth: number }> = [
     { id: rootNodeId, depth: 0 },
   ];
-  const adjacencyByNode: Record<string, string[]> = {};
 
+  // build adjacency for BFS traversal
+  const adjacencyByNode: Record<string, string[]> = {};
   Object.values(edgesById).forEach((edge) => {
     adjacencyByNode[edge.source] = adjacencyByNode[edge.source] ?? [];
     adjacencyByNode[edge.target] = adjacencyByNode[edge.target] ?? [];
@@ -438,7 +455,6 @@ export function computeLayoutFrame(input: LayoutInput): LayoutFrame {
       if (!(neighborId in parentByNodeId)) {
         parentByNodeId[neighborId] = node.id;
       }
-
       queue.push({ id: neighborId, depth: current.depth + 1 });
     });
   }
@@ -455,22 +471,48 @@ export function computeLayoutFrame(input: LayoutInput): LayoutFrame {
       label: edge.label,
     }));
 
-  const positionedById = computeForcePositions({
-    visibleNodeIds,
+  // build visible childIdsByParent, sorted for deterministic angles
+  const visibleChildIdsByParent: Record<string, string[]> = {};
+  Array.from(visibleNodeIds).forEach((nodeId) => {
+    const children = (childIdsByParent[nodeId] ?? [])
+      .filter((childId) => visibleNodeIds.has(childId))
+      .sort((a, b) =>
+        (nodesById[a]?.label ?? a).localeCompare(nodesById[b]?.label ?? b),
+      );
+    if (children.length > 0) {
+      visibleChildIdsByParent[nodeId] = children;
+    }
+  });
+
+  return {
+    visibleNodeIds: Array.from(visibleNodeIds),
     depthByNodeId,
-    nodesById,
-    parentByNodeId,
-    edges: visibleEdges,
+    childIdsByParent: visibleChildIdsByParent,
+    visibleEdges,
     rootNodeId,
+  };
+}
+
+export function computeLayoutFrame(input: LayoutInput): LayoutFrame {
+  const topology = computeLayoutTopology(input);
+  if (!topology) return { nodes: [], edges: [] };
+
+  const positionedById = computeForcePositions({
+    visibleNodeIds: new Set(topology.visibleNodeIds),
+    depthByNodeId: topology.depthByNodeId,
+    nodesById: input.nodesById,
+    childIdsByParent: topology.childIdsByParent,
+    edges: topology.visibleEdges,
+    rootNodeId: topology.rootNodeId,
   });
 
   const centerX = CANVAS.width / 2;
   const centerY = CANVAS.height / 2;
 
-  const positionedNodes: PositionedNode[] = Array.from(visibleNodeIds).reduce<
+  const positionedNodes: PositionedNode[] = topology.visibleNodeIds.reduce<
     PositionedNode[]
   >((acc, id) => {
-    const node = nodesById[id];
+    const node = input.nodesById[id];
     if (!node) return acc;
 
     const position = positionedById[id];
@@ -479,9 +521,10 @@ export function computeLayoutFrame(input: LayoutInput): LayoutFrame {
       id: node.id,
       label: node.label,
       kind: node.kind,
-      depth: depthByNodeId[id] ?? 0,
-      x: manualPositions[id]?.x ?? position?.x ?? centerX,
-      y: manualPositions[id]?.y ?? position?.y ?? centerY,
+      semanticType: node.semanticType,
+      depth: topology.depthByNodeId[id] ?? 0,
+      x: input.manualPositions[id]?.x ?? position?.x ?? centerX,
+      y: input.manualPositions[id]?.y ?? position?.y ?? centerY,
       loading: node.loading,
       error: node.error,
     });
@@ -491,6 +534,6 @@ export function computeLayoutFrame(input: LayoutInput): LayoutFrame {
 
   return {
     nodes: depthSort(positionedNodes),
-    edges: visibleEdges,
+    edges: topology.visibleEdges,
   };
 }

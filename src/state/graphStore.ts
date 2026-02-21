@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { immer } from "zustand/middleware/immer";
 import {
   CANVAS,
   DEFAULT_CONNECTION_DEPTH,
@@ -6,7 +7,7 @@ import {
   MIN_CONNECTION_DEPTH,
   MAX_VISIBLE_SIBLINGS,
 } from "../config/constants";
-import { computeLayoutFrame, type LayoutFrame } from "../lib/layoutEngine";
+import { computeLayoutTopology } from "../lib/layoutEngine";
 import type {
   ExpansionNode,
   GraphEdgeEntity,
@@ -28,7 +29,7 @@ type GraphStore = {
   childTotalByParent: Record<string, number>;
   siblingPageByParent: Record<string, number>;
   manualPositions: Record<string, { x: number; y: number }>;
-  frame: LayoutFrame;
+  adjacencyByNode: Record<string, string[]>;
   viewport: ViewportState;
   syncStatus: "idle" | "syncing" | "error";
   syncError?: string;
@@ -66,421 +67,323 @@ type GraphStore = {
   setViewport: (viewport: ViewportState) => void;
   pan: (deltaX: number, deltaY: number) => void;
   zoom: (direction: number, pointerX: number, pointerY: number) => void;
-  recalculateFrame: () => void;
 };
-
-let rafId: number | null = null;
 
 function buildUndirectedEdgeId(a: string, b: string): string {
   return a < b ? `${a}::${b}` : `${b}::${a}`;
 }
 
-function scheduleFrame(
-  get: () => GraphStore,
-  set: (fn: (state: GraphStore) => Partial<GraphStore>) => void,
-) {
-  if (rafId !== null) {
-    cancelAnimationFrame(rafId);
-  }
+export const useGraphStore = create<GraphStore>()(
+  immer((set, get) => ({
+    projectId: null,
+    rootNodeId: null,
+    focusedNodeId: null,
+    selectedNodeId: null,
+    lastVisitedNodeId: null,
+    connectionDepth: DEFAULT_CONNECTION_DEPTH,
+    nodesById: {},
+    edgesById: {},
+    childIdsByParent: {},
+    childTotalByParent: {},
+    siblingPageByParent: {},
+    manualPositions: {},
+    adjacencyByNode: {},
+    viewport: { x: CANVAS.width * 0.12, y: 30, scale: 0.7 },
+    syncStatus: "idle",
+    syncError: undefined,
 
-  rafId = requestAnimationFrame(() => {
-    rafId = null;
-    const state = get();
-    const frame = computeLayoutFrame({
-      rootNodeId: state.focusedNodeId ?? state.rootNodeId,
-      connectionDepth: state.connectionDepth,
-      nodesById: state.nodesById,
-      edgesById: state.edgesById,
-      childIdsByParent: state.childIdsByParent,
-      siblingPageByParent: state.siblingPageByParent,
-      manualPositions: state.manualPositions,
-    });
-
-    set(() => ({ frame }));
-  });
-}
-
-export const useGraphStore = create<GraphStore>((set, get) => ({
-  projectId: null,
-  rootNodeId: null,
-  focusedNodeId: null,
-  selectedNodeId: null,
-  lastVisitedNodeId: null,
-  connectionDepth: DEFAULT_CONNECTION_DEPTH,
-  nodesById: {},
-  edgesById: {},
-  childIdsByParent: {},
-  childTotalByParent: {},
-  siblingPageByParent: {},
-  manualPositions: {},
-  frame: { nodes: [], edges: [] },
-  viewport: { x: CANVAS.width * 0.12, y: 30, scale: 0.7 },
-  syncStatus: "idle",
-  syncError: undefined,
-
-  setProject(projectId, rootNode) {
-    const rootId = rootNode.id;
-    set(() => ({
-      projectId,
-      rootNodeId: rootId,
-      focusedNodeId: rootId,
-      selectedNodeId: rootId,
-      lastVisitedNodeId: rootId,
-      nodesById: {
-        [rootId]: {
-          id: rootId,
-          label: rootNode.label,
-          kind: rootNode.kind ?? "layer",
-          depth: 0,
-          expanded: true,
-          loading: false,
-        },
-      },
-      edgesById: {},
-      childIdsByParent: {},
-      childTotalByParent: {},
-      siblingPageByParent: {},
-      manualPositions: {},
-      frame: { nodes: [], edges: [] },
-      syncStatus: "idle",
-      syncError: undefined,
-    }));
-
-    scheduleFrame(get, set);
-  },
-
-  setSyncStatus(status, error) {
-    set(() => ({ syncStatus: status, syncError: error }));
-  },
-
-  setSelectedNode(nodeId) {
-    set(() => ({ selectedNodeId: nodeId, lastVisitedNodeId: nodeId }));
-  },
-
-  setFocusedNode(nodeId) {
-    const snapshot = get();
-    const nextRootId = nodeId ?? snapshot.rootNodeId;
-
-    const nextFrame = computeLayoutFrame({
-      rootNodeId: nextRootId,
-      connectionDepth: snapshot.connectionDepth,
-      nodesById: snapshot.nodesById,
-      edgesById: snapshot.edgesById,
-      childIdsByParent: snapshot.childIdsByParent,
-      siblingPageByParent: snapshot.siblingPageByParent,
-      manualPositions: snapshot.manualPositions,
-    });
-
-    const visibleDepthById = nextFrame.nodes.reduce<Record<string, number>>(
-      (acc, node) => {
-        acc[node.id] = node.depth;
-        return acc;
-      },
-      {},
-    );
-    const visibleNodeIds = new Set(nextFrame.nodes.map((node) => node.id));
-
-    set((state) => {
-      const nextNodesById: Record<string, GraphNodeEntity> = {
-        ...state.nodesById,
-      };
-
-      Object.keys(visibleDepthById).forEach((id) => {
-        const currentNode = nextNodesById[id];
-        const nextDepth = visibleDepthById[id];
-        if (!currentNode || currentNode.depth === nextDepth) return;
-
-        nextNodesById[id] = {
-          ...currentNode,
-          depth: nextDepth,
-        };
-      });
-
-      const nextManualPositions = Object.entries(state.manualPositions).reduce<
-        Record<string, { x: number; y: number }>
-      >((acc, [id, value]) => {
-        if (visibleNodeIds.has(id)) {
-          acc[id] = value;
-        }
-        return acc;
-      }, {});
-
-      return {
-        focusedNodeId: nodeId,
-        nodesById: nextNodesById,
-        manualPositions: nextManualPositions,
-        frame: nextFrame,
-      };
-    });
-  },
-
-  setConnectionDepth(depth) {
-    const safeDepth = Math.max(
-      MIN_CONNECTION_DEPTH,
-      Math.min(MAX_CONNECTION_DEPTH, depth),
-    );
-    set(() => ({ connectionDepth: safeDepth }));
-    scheduleFrame(get, set);
-  },
-
-  setNodeLoading(nodeId, loading, error) {
-    set((state) => {
-      const current = state.nodesById[nodeId];
-      if (!current) return state;
-
-      return {
-        nodesById: {
-          ...state.nodesById,
-          [nodeId]: {
-            ...current,
-            loading,
-            error,
-          },
-        },
-      };
-    });
-  },
-
-  setNodeExpanded(nodeId, expanded) {
-    set((state) => {
-      const current = state.nodesById[nodeId];
-      if (!current) return state;
-
-      return {
-        nodesById: {
-          ...state.nodesById,
-          [nodeId]: {
-            ...current,
-            expanded,
-            error: undefined,
-          },
-        },
-      };
-    });
-
-    scheduleFrame(get, set);
-  },
-
-  mergeExpansionPage({ parentId, total, page, children }) {
-    set((state) => {
-      const parent = state.nodesById[parentId];
-      if (!parent) return state;
-
-      const nextNodesById = { ...state.nodesById };
-      const nextEdgesById = { ...state.edgesById };
-      const nextChildIds = new Set(state.childIdsByParent[parentId] ?? []);
-
-      children.forEach((child) => {
-        const existing = nextNodesById[child.id];
-        if (!existing) {
-          nextNodesById[child.id] = {
-            id: child.id,
-            label: child.label,
-            kind: child.kind,
-            semanticType: child.semanticType,
-            depth: parent.depth + 1,
-            parentId,
-            expanded: false,
-            loading: false,
-          };
-        }
-
-        nextChildIds.add(child.id);
-
-        const edgeId = buildUndirectedEdgeId(parentId, child.id);
-        if (!nextEdgesById[edgeId]) {
-          nextEdgesById[edgeId] = {
-            id: edgeId,
-            source: parentId,
-            target: child.id,
-            label: child.relation,
-          };
-        }
-      });
-
-      const nextSiblingPageByParent = {
-        ...state.siblingPageByParent,
-        [parentId]: page,
-      };
-
-      return {
-        nodesById: {
-          ...nextNodesById,
-          [parentId]: {
-            ...parent,
+    setProject(projectId, rootNode) {
+      const rootId = rootNode.id;
+      set((draft) => {
+        draft.projectId = projectId;
+        draft.rootNodeId = rootId;
+        draft.focusedNodeId = rootId;
+        draft.selectedNodeId = rootId;
+        draft.lastVisitedNodeId = rootId;
+        draft.nodesById = {
+          [rootId]: {
+            id: rootId,
+            label: rootNode.label,
+            kind: rootNode.kind ?? "layer",
+            depth: 0,
             expanded: true,
             loading: false,
-            error:
-              children.length === 0 && total === 0
-                ? "No connections found"
-                : undefined,
           },
-        },
-        edgesById: nextEdgesById,
-        childIdsByParent: {
-          ...state.childIdsByParent,
-          [parentId]: Array.from(nextChildIds),
-        },
-        childTotalByParent: {
-          ...state.childTotalByParent,
-          [parentId]: total,
-        },
-        siblingPageByParent: nextSiblingPageByParent,
-      };
-    });
+        };
+        draft.edgesById = {};
+        draft.childIdsByParent = {};
+        draft.childTotalByParent = {};
+        draft.siblingPageByParent = {};
+        draft.manualPositions = {};
+        draft.adjacencyByNode = {};
+        draft.syncStatus = "idle";
+        draft.syncError = undefined;
+      });
+    },
 
-    scheduleFrame(get, set);
-  },
+    setSyncStatus(status, error) {
+      set((draft) => {
+        draft.syncStatus = status;
+        draft.syncError = error;
+      });
+    },
 
-  mergeExpansionBatch({ parents }) {
-    set((state) => {
-      if (parents.length === 0) return state;
+    setSelectedNode(nodeId) {
+      set((draft) => {
+        draft.selectedNodeId = nodeId;
+        draft.lastVisitedNodeId = nodeId;
+      });
+    },
 
-      const nextNodesById = { ...state.nodesById };
-      const nextEdgesById = { ...state.edgesById };
-      const nextChildIdsByParent = { ...state.childIdsByParent };
-      const nextChildTotalByParent = { ...state.childTotalByParent };
-      const nextSiblingPageByParent = { ...state.siblingPageByParent };
+    setFocusedNode(nodeId) {
+      const snapshot = get();
+      const nextRootId = nodeId ?? snapshot.rootNodeId;
 
-      parents.forEach((entry) => {
-        const parent = nextNodesById[entry.parentId];
+      const topology = computeLayoutTopology({
+        rootNodeId: nextRootId,
+        connectionDepth: snapshot.connectionDepth,
+        nodesById: snapshot.nodesById,
+        edgesById: snapshot.edgesById,
+        childIdsByParent: snapshot.childIdsByParent,
+        siblingPageByParent: snapshot.siblingPageByParent,
+        manualPositions: snapshot.manualPositions,
+      });
+
+      if (!topology) {
+        set((draft) => {
+          draft.focusedNodeId = nodeId;
+        });
+        return;
+      }
+
+      const visibleNodeIds = new Set(topology.visibleNodeIds);
+
+      set((draft) => {
+        topology.visibleNodeIds.forEach((id) => {
+          const nextDepth = topology.depthByNodeId[id];
+          if (draft.nodesById[id] && draft.nodesById[id].depth !== nextDepth) {
+            draft.nodesById[id].depth = nextDepth ?? 0;
+          }
+        });
+
+        const nextManualPositions: Record<string, { x: number; y: number }> =
+          {};
+        Object.entries(draft.manualPositions).forEach(([id, pos]) => {
+          if (visibleNodeIds.has(id)) {
+            nextManualPositions[id] = pos;
+          }
+        });
+
+        draft.focusedNodeId = nodeId;
+        draft.manualPositions = nextManualPositions;
+      });
+    },
+
+    setConnectionDepth(depth) {
+      const safeDepth = Math.max(
+        MIN_CONNECTION_DEPTH,
+        Math.min(MAX_CONNECTION_DEPTH, depth),
+      );
+      set((draft) => {
+        draft.connectionDepth = safeDepth;
+      });
+    },
+
+    setNodeLoading(nodeId, loading, error) {
+      set((draft) => {
+        const current = draft.nodesById[nodeId];
+        if (!current) return;
+        current.loading = loading;
+        current.error = error;
+      });
+    },
+
+    setNodeExpanded(nodeId, expanded) {
+      set((draft) => {
+        const current = draft.nodesById[nodeId];
+        if (!current) return;
+        current.expanded = expanded;
+        current.error = undefined;
+      });
+    },
+
+    mergeExpansionPage({ parentId, total, page, children }) {
+      set((draft) => {
+        const parent = draft.nodesById[parentId];
         if (!parent) return;
 
-        const childIds: string[] = [];
+        const existingChildIds = new Set(draft.childIdsByParent[parentId] ?? []);
 
-        entry.children.forEach((child) => {
-          const existing = nextNodesById[child.id];
-          if (!existing) {
-            nextNodesById[child.id] = {
+        children.forEach((child) => {
+          if (!draft.nodesById[child.id]) {
+            draft.nodesById[child.id] = {
               id: child.id,
               label: child.label,
               kind: child.kind,
               semanticType: child.semanticType,
               depth: parent.depth + 1,
-              parentId: entry.parentId,
+              parentId,
               expanded: false,
               loading: false,
             };
           }
 
-          childIds.push(child.id);
+          existingChildIds.add(child.id);
 
-          const edgeId = buildUndirectedEdgeId(entry.parentId, child.id);
-          if (!nextEdgesById[edgeId]) {
-            nextEdgesById[edgeId] = {
+          const edgeId = buildUndirectedEdgeId(parentId, child.id);
+          if (!draft.edgesById[edgeId]) {
+            draft.edgesById[edgeId] = {
               id: edgeId,
-              source: entry.parentId,
+              source: parentId,
               target: child.id,
               label: child.relation,
             };
           }
+
+          // F: maintain adjacency index incrementally
+          draft.adjacencyByNode[parentId] ??= [];
+          if (!draft.adjacencyByNode[parentId].includes(child.id)) {
+            draft.adjacencyByNode[parentId].push(child.id);
+          }
+          draft.adjacencyByNode[child.id] ??= [];
+          if (!draft.adjacencyByNode[child.id].includes(parentId)) {
+            draft.adjacencyByNode[child.id].push(parentId);
+          }
         });
 
-        nextNodesById[entry.parentId] = {
+        draft.nodesById[parentId] = {
           ...parent,
           expanded: true,
           loading: false,
           error:
-            entry.children.length === 0 && entry.total === 0
+            children.length === 0 && total === 0
               ? "No connections found"
               : undefined,
         };
 
-        nextChildIdsByParent[entry.parentId] = childIds;
-        nextChildTotalByParent[entry.parentId] = entry.total;
-        if (!(entry.parentId in nextSiblingPageByParent)) {
-          nextSiblingPageByParent[entry.parentId] = 0;
-        }
+        draft.childIdsByParent[parentId] = Array.from(existingChildIds);
+        draft.childTotalByParent[parentId] = total;
+        draft.siblingPageByParent[parentId] = page;
       });
+    },
 
-      return {
-        nodesById: nextNodesById,
-        edgesById: nextEdgesById,
-        childIdsByParent: nextChildIdsByParent,
-        childTotalByParent: nextChildTotalByParent,
-        siblingPageByParent: nextSiblingPageByParent,
-      };
-    });
+    mergeExpansionBatch({ parents }) {
+      if (parents.length === 0) return;
 
-    scheduleFrame(get, set);
-  },
+      set((draft) => {
+        parents.forEach((entry) => {
+          const parent = draft.nodesById[entry.parentId];
+          if (!parent) return;
 
-  setSiblingPage(parentId, page) {
-    set((state) => {
-      const safePage = Math.max(0, page);
-      return {
-        siblingPageByParent: {
-          ...state.siblingPageByParent,
-          [parentId]: safePage,
-        },
-      };
-    });
+          const childIds: string[] = [];
 
-    scheduleFrame(get, set);
-  },
+          entry.children.forEach((child) => {
+            if (!draft.nodesById[child.id]) {
+              draft.nodesById[child.id] = {
+                id: child.id,
+                label: child.label,
+                kind: child.kind,
+                semanticType: child.semanticType,
+                depth: parent.depth + 1,
+                parentId: entry.parentId,
+                expanded: false,
+                loading: false,
+              };
+            }
 
-  setManualPosition(nodeId, position) {
-    set((state) => ({
-      manualPositions: {
-        ...state.manualPositions,
-        [nodeId]: position,
-      },
-    }));
+            childIds.push(child.id);
 
-    scheduleFrame(get, set);
-  },
+            const edgeId = buildUndirectedEdgeId(entry.parentId, child.id);
+            if (!draft.edgesById[edgeId]) {
+              draft.edgesById[edgeId] = {
+                id: edgeId,
+                source: entry.parentId,
+                target: child.id,
+                label: child.relation,
+              };
+            }
 
-  setManualPositionsBatch(positionsById) {
-    const entries = Object.entries(positionsById);
-    if (entries.length === 0) return;
+            // F: maintain adjacency index incrementally
+            draft.adjacencyByNode[entry.parentId] ??= [];
+            if (!draft.adjacencyByNode[entry.parentId].includes(child.id)) {
+              draft.adjacencyByNode[entry.parentId].push(child.id);
+            }
+            draft.adjacencyByNode[child.id] ??= [];
+            if (!draft.adjacencyByNode[child.id].includes(entry.parentId)) {
+              draft.adjacencyByNode[child.id].push(entry.parentId);
+            }
+          });
 
-    set((state) => ({
-      manualPositions: {
-        ...state.manualPositions,
-        ...positionsById,
-      },
-    }));
+          draft.nodesById[entry.parentId] = {
+            ...parent,
+            expanded: true,
+            loading: false,
+            error:
+              entry.children.length === 0 && entry.total === 0
+                ? "No connections found"
+                : undefined,
+          };
 
-    scheduleFrame(get, set);
-  },
+          draft.childIdsByParent[entry.parentId] = childIds;
+          draft.childTotalByParent[entry.parentId] = entry.total;
+          if (!(entry.parentId in draft.siblingPageByParent)) {
+            draft.siblingPageByParent[entry.parentId] = 0;
+          }
+        });
+      });
+    },
 
-  setViewport(viewport) {
-    set(() => ({ viewport }));
-  },
+    setSiblingPage(parentId, page) {
+      set((draft) => {
+        draft.siblingPageByParent[parentId] = Math.max(0, page);
+      });
+    },
 
-  pan(deltaX, deltaY) {
-    set((state) => ({
-      viewport: {
-        ...state.viewport,
-        x: state.viewport.x + deltaX,
-        y: state.viewport.y + deltaY,
-      },
-    }));
-  },
+    setManualPosition(nodeId, position) {
+      set((draft) => {
+        draft.manualPositions[nodeId] = position;
+      });
+    },
 
-  zoom(direction, pointerX, pointerY) {
-    set((state) => {
-      const scaleStep = direction > 0 ? 1.08 : 0.92;
-      const nextScale = Math.min(
-        1.8,
-        Math.max(0.45, state.viewport.scale * scaleStep),
-      );
-      const ratio = nextScale / state.viewport.scale;
+    setManualPositionsBatch(positionsById) {
+      const entries = Object.entries(positionsById);
+      if (entries.length === 0) return;
 
-      return {
-        viewport: {
-          scale: nextScale,
-          x: pointerX - (pointerX - state.viewport.x) * ratio,
-          y: pointerY - (pointerY - state.viewport.y) * ratio,
-        },
-      };
-    });
-  },
+      set((draft) => {
+        entries.forEach(([id, pos]) => {
+          draft.manualPositions[id] = pos;
+        });
+      });
+    },
 
-  recalculateFrame() {
-    scheduleFrame(get, set);
-  },
-}));
+    setViewport(viewport) {
+      set((draft) => {
+        draft.viewport = viewport;
+      });
+    },
+
+    pan(deltaX, deltaY) {
+      set((draft) => {
+        draft.viewport.x += deltaX;
+        draft.viewport.y += deltaY;
+      });
+    },
+
+    zoom(direction, pointerX, pointerY) {
+      set((draft) => {
+        const scaleStep = direction > 0 ? 1.08 : 0.92;
+        const nextScale = Math.min(
+          1.8,
+          Math.max(0.45, draft.viewport.scale * scaleStep),
+        );
+        const ratio = nextScale / draft.viewport.scale;
+        draft.viewport.scale = nextScale;
+        draft.viewport.x = pointerX - (pointerX - draft.viewport.x) * ratio;
+        draft.viewport.y = pointerY - (pointerY - draft.viewport.y) * ratio;
+      });
+    },
+  })),
+);
 
 export function getSiblingPageInfo(
   state: GraphStore,

@@ -51,6 +51,7 @@ export type PositionedNode = {
   id: string;
   label: string;
   kind: NodeKind;
+  semanticType?: SemanticNodeType;
   depth: number;
   x: number;
   y: number;
