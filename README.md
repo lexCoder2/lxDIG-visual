@@ -1,83 +1,49 @@
 # Code Visual
 
-Interactive Memgraph project visualizer with scalable state management and performance-focused graph rendering.
+> Navigate your codebase as a live graph. Powered by Memgraph.
 
-## Core Features
+![Code Visual screenshot](docs/screenshot.png)
 
-- Project list retrieval from database (or mock fallback)
-- Project selection and graph root initialization
-- Auto-refresh every 5 seconds
-- Interactive graph navigation with pan + zoom
-- Depth-limited traversal (configurable 1–4 levels)
-- Sibling capping (max 20 visible siblings per parent)
-- Sibling paging (Prev/Next) for large fan-out
-- Frame precomputation before render (`requestAnimationFrame` layout pipeline)
-- In-canvas modular controls with neumorphic + glass styling
+Code Visual connects to a Memgraph database and renders the relationships between projects, modules, files, and code entities as an interactive force-directed graph. Expand nodes, change depth, filter by semantic type, and drag the canvas to explore your architecture at a glance.
 
-## Architecture
+## Features
 
-- `src/lib/memgraphClient.ts`: Memgraph access layer with live/mock modes
-- `src/state/graphStore.ts`: Zustand graph/UI store and render frame scheduler
-- `src/lib/layoutEngine.ts`: deterministic visibility + layout computation
-- `src/hooks/useGraphController.ts`: orchestration for querying, polling, and expansion
-- `src/components/controls/`: modular control components rendered as in-canvas overlay
-- `src/App.tsx`: UI and interaction layer
+- **Live graph** — auto-refreshes from Memgraph every 5 s
+- **Depth navigation** — configurable traversal depth (1–4 levels)
+- **Semantic filters** — show/hide functions, classes, imports, exports, variables
+- **Hierarchical subtree pruning** — hiding a type removes its entire descendant tree and reflows the layout
+- **Drag & drop** — nodes propagate movement to nearby connected nodes
+- **Mock mode** — works offline with built-in synthetic data
+- **Neumorphic UI** — glass-morphic header, soft-shadow nodes, pastel accents
 
-## Configuration
-
-Set one of these frontend env vars:
-
-- `VITE_MEMGRAPH_URL`
-- `VITE_MEMGRAPH_ENDPOINT`
-- `VITE_MEMGRAPH_URI`
-
-Example:
+## Quick start
 
 ```bash
-VITE_MEMGRAPH_URL=http://localhost:4000/query
-```
+# 1. Install
+npm install
 
-Bolt protocol support is provided through a local proxy server:
+# 2. Copy and fill env
+cp .env.example .env   # set MEMGRAPH_BOLT_URL, MEMGRAPH_PROXY_PORT
 
-```bash
-MEMGRAPH_BOLT_URL=bolt://localhost:7687
-# Optional auth
-MEMGRAPH_BOLT_USER=
-MEMGRAPH_BOLT_PASSWORD=
-MEMGRAPH_PROXY_PORT=4000
-```
-
-Run in separate terminals:
-
-```bash
-npm run proxy
-npm run dev
-```
-
-Or run both together:
-
-```bash
+# 3. Run proxy + dev server together
 npm run dev:all
 ```
 
-`VITE_MEMGRAPH_URL` should point to the proxy endpoint (default: `http://localhost:4000/query`).
+Open [http://localhost:5173](http://localhost:5173).  
+If Memgraph is unreachable the app falls back to mock data automatically.
 
-If the endpoint is `http(s)://`, the app sends POST requests with:
+## Environment
 
-Request shape:
+| Variable | Default | Purpose |
+|---|---|---|
+| `VITE_MEMGRAPH_URL` | `http://localhost:4000/query` | Frontend → proxy endpoint |
+| `MEMGRAPH_BOLT_URL` | `bolt://localhost:7687` | Proxy → Memgraph Bolt |
+| `MEMGRAPH_BOLT_USER` | _(empty)_ | Bolt auth username |
+| `MEMGRAPH_BOLT_PASSWORD` | _(empty)_ | Bolt auth password |
+| `MEMGRAPH_PROXY_PORT` | `4000` | Local proxy port |
 
-```json
-{
-  "query": "<cypher>",
-  "params": {}
-}
-```
+See [docs/architecture.md](docs/architecture.md) for a full technical breakdown.
 
-Expected response formats supported:
-
-- `Array<Record<string, unknown>>`
-- `{ "results": [...] }`
-- `{ "data": [...] }`
 - `{ "rows": [...] }`
 
 If no endpoint is configured, the app runs in mock mode.
