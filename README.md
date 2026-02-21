@@ -1,59 +1,147 @@
 # Code Visual
 
-> Navigate your codebase as a live graph. Powered by Memgraph.
+<p align="center">
+	<strong>Navigate your codebase as a living graph.</strong><br/>
+	Powered by Memgraph, rendered with a responsive interactive canvas.
+</p>
 
-<div align="center">
-<img src="docs/image.png" alt="Code Visual screenshot" width="640" />
-</div>  
-> **Works with [code-graph-server](https://github.com/lexCoder2/code-graph-server)** — an MCP tool for VS Code and Claude that analyses your codebase and populates Memgraph with nodes and relationships. Code Visual is the visual front-end for that graph.
+<p align="center">
+	<img alt="Vite" src="https://img.shields.io/badge/Vite-8-blueviolet" />
+	<img alt="React" src="https://img.shields.io/badge/React-19-61DAFB" />
+	<img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-3178C6" />
+	<img alt="Zustand" src="https://img.shields.io/badge/Zustand-State-8E6CEF" />
+	<img alt="License" src="https://img.shields.io/badge/License-MIT-green" />
+</p>
 
-Code Visual connects to a Memgraph database and renders the relationships between projects, modules, files, and code entities as an interactive force-directed graph. Expand nodes, change depth, filter by semantic type, and drag the canvas to explore your architecture at a glance.
+<p align="center">
+	<img src="docs/image.png" alt="Code Visual screenshot" width="760" />
+</p>
 
-## Features
+<p align="center">
+	Works with <a href="https://github.com/lexCoder2/code-graph-server"><strong>code-graph-server</strong></a> to ingest project structure and relationships into Memgraph.
+</p>
 
-- **Live graph** — auto-refreshes from Memgraph every 5 s
-- **Depth navigation** — configurable traversal depth (1–4 levels)
-- **Semantic filters** — show/hide functions, classes, imports, exports, variables
-- **Hierarchical subtree pruning** — hiding a type removes its entire descendant tree and reflows the layout
-- **Drag & drop** — nodes propagate movement to nearby connected nodes
-- **Mock mode** — works offline with built-in synthetic data
-- **Neumorphic UI** — glass-morphic header, soft-shadow nodes, pastel accents
+---
 
-## Quick start
+## ✨ Why Code Visual
+
+Code Visual helps you explore architecture, dependencies, and semantic entities in real time. It is optimized for quick navigation, high-density graph interactions, and smooth visual feedback.
+
+| Capability | What you get |
+| --- | --- |
+| Live Sync | Auto-refresh from Memgraph every 5 seconds |
+| Semantic Filtering | Toggle functions, classes, imports, exports, and variables |
+| Smart Navigation | Depth control + subtree pruning for focused exploration |
+| Stable Interaction | Depth-weighted drag propagation and smooth camera transitions |
+| Precise Rendering | Dynamic edge bounds, accurate labels, and rounded-node anchoring |
+| Visual Clarity | Node kind/semantic indicators for faster identification |
+
+## 🧭 Quick Links
+
+- [Quick Start](#-quick-start)
+- [Command Batches](#-command-batches)
+- [Environment](#-environment)
+- [Scripts](#-scripts)
+- [Interaction Guide](#-interaction-guide)
+- [Architecture](#-architecture)
+- [Troubleshooting](#-troubleshooting)
+
+## 🚀 Quick Start
 
 ```bash
-# 1. Install
+# 1) Install dependencies
 npm install
 
-# 2. Copy and fill env
-cp .env.example .env   # set MEMGRAPH_BOLT_URL, MEMGRAPH_PROXY_PORT
+# 2) Configure environment
+cp .env.example .env
 
-# 3. Run proxy + dev server together
+# 3) Run proxy + frontend
 npm run dev:all
 ```
 
-Open [http://localhost:5173](http://localhost:5173).  
-If Memgraph is unreachable the app falls back to mock data automatically.
+Open [http://localhost:5173](http://localhost:5173).
 
-## Environment
+If Memgraph is unavailable, the UI automatically falls back to mock mode.
 
-| Variable                 | Default                       | Purpose                   |
-| ------------------------ | ----------------------------- | ------------------------- |
-| `VITE_MEMGRAPH_URL`      | `http://localhost:4000/query` | Frontend → proxy endpoint |
-| `MEMGRAPH_BOLT_URL`      | `bolt://localhost:7687`       | Proxy → Memgraph Bolt     |
-| `MEMGRAPH_BOLT_USER`     | _(empty)_                     | Bolt auth username        |
-| `MEMGRAPH_BOLT_PASSWORD` | _(empty)_                     | Bolt auth password        |
-| `MEMGRAPH_PROXY_PORT`    | `4000`                        | Local proxy port          |
+## 📦 Command Batches
 
-See [docs/architecture.md](docs/architecture.md) for a full technical breakdown.
+### Batch A — Full local development
 
-- `{ "rows": [...] }`
+```bash
+npm install
+cp .env.example .env
+npm run dev:all
+```
 
-If no endpoint is configured, the app runs in mock mode.
+### Batch B — Frontend only (proxy already running)
 
-## Scripts
+```bash
+npm run dev
+```
 
-- `npm run dev`: start development server
-- `npm run build`: type-check + build
-- `npm run lint`: lint project
-- `npm run preview`: preview production build
+### Batch C — Pre-push quality checks
+
+```bash
+npm run lint
+npm run build
+```
+
+### Batch D — Production preview
+
+```bash
+npm run build
+npm run preview
+```
+
+## 🔐 Environment
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `VITE_MEMGRAPH_URL` | `http://localhost:4000/query` | Frontend → proxy endpoint |
+| `MEMGRAPH_BOLT_URL` | `bolt://localhost:7687` | Proxy → Memgraph Bolt |
+| `MEMGRAPH_BOLT_USER` | _(empty)_ | Bolt auth username |
+| `MEMGRAPH_BOLT_PASSWORD` | _(empty)_ | Bolt auth password |
+| `MEMGRAPH_PROXY_PORT` | `4000` | Local proxy port |
+
+Expected proxy response shape:
+
+```json
+{ "rows": [...] }
+```
+
+## 🛠 Scripts
+
+- `npm run dev` — start Vite dev server
+- `npm run dev:server` — start Memgraph proxy server
+- `npm run dev:all` — run proxy + frontend concurrently
+- `npm run build` — type-check and production build
+- `npm run lint` — lint source files
+- `npm run preview` — preview production build locally
+
+## 🎮 Interaction Guide
+
+- **Right-drag canvas** to pan
+- **Mouse wheel** to zoom around pointer
+- **Single-click node** to select
+- **Double-click node** to expand neighborhood
+- **Drag node** to reposition with connected movement propagation
+- **Use top controls** for project, depth, motion, refresh, and semantic toggles
+
+## 🧱 Architecture
+
+- **Frontend:** React + TypeScript + Vite
+- **State:** Zustand with Immer middleware
+- **Layout:** `d3-force` simulation + worker offload
+- **Pipeline:** `Memgraph -> proxy -> graph store -> layout worker -> canvas`
+
+Further reading:
+
+- [docs/architecture.md](docs/architecture.md)
+- [docs/performance-plan.md](docs/performance-plan.md)
+
+## 🧩 Troubleshooting
+
+- **Disconnected / empty graph:** validate `MEMGRAPH_BOLT_URL` and `MEMGRAPH_PROXY_PORT`
+- **Network/CORS errors on `VITE_MEMGRAPH_URL`:** ensure proxy is running on configured host/port
+- **Slower interaction on dense graphs:** reduce connection depth or narrow semantic filters
+- **Local build failures:** rerun `npm install` and then `npm run build`
