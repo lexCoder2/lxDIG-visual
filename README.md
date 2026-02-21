@@ -27,14 +27,14 @@
 
 Code Visual helps you explore architecture, dependencies, and semantic entities in real time. It is optimized for quick navigation, high-density graph interactions, and smooth visual feedback.
 
-| Capability | What you get |
-| --- | --- |
-| Live Sync | Auto-refresh from Memgraph every 5 seconds |
-| Semantic Filtering | Toggle functions, classes, imports, exports, and variables |
-| Smart Navigation | Depth control + subtree pruning for focused exploration |
-| Stable Interaction | Depth-weighted drag propagation and smooth camera transitions |
-| Precise Rendering | Dynamic edge bounds, accurate labels, and rounded-node anchoring |
-| Visual Clarity | Node kind/semantic indicators for faster identification |
+| Capability         | What you get                                                     |
+| ------------------ | ---------------------------------------------------------------- |
+| Live Sync          | Auto-refresh from Memgraph every 5 seconds                       |
+| Semantic Filtering | Toggle functions, classes, imports, exports, and variables       |
+| Smart Navigation   | Depth control + subtree pruning for focused exploration          |
+| Stable Interaction | Depth-weighted drag propagation and smooth camera transitions    |
+| Precise Rendering  | Dynamic edge bounds, accurate labels, and rounded-node anchoring |
+| Visual Clarity     | Node kind/semantic indicators for faster identification          |
 
 ## 🧭 Quick Links
 
@@ -95,13 +95,13 @@ npm run preview
 
 ## 🔐 Environment
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `VITE_MEMGRAPH_URL` | `http://localhost:4000/query` | Frontend → proxy endpoint |
-| `MEMGRAPH_BOLT_URL` | `bolt://localhost:7687` | Proxy → Memgraph Bolt |
-| `MEMGRAPH_BOLT_USER` | _(empty)_ | Bolt auth username |
-| `MEMGRAPH_BOLT_PASSWORD` | _(empty)_ | Bolt auth password |
-| `MEMGRAPH_PROXY_PORT` | `4000` | Local proxy port |
+| Variable                 | Default                       | Purpose                   |
+| ------------------------ | ----------------------------- | ------------------------- |
+| `VITE_MEMGRAPH_URL`      | `http://localhost:4000/query` | Frontend → proxy endpoint |
+| `MEMGRAPH_BOLT_URL`      | `bolt://localhost:7687`       | Proxy → Memgraph Bolt     |
+| `MEMGRAPH_BOLT_USER`     | _(empty)_                     | Bolt auth username        |
+| `MEMGRAPH_BOLT_PASSWORD` | _(empty)_                     | Bolt auth password        |
+| `MEMGRAPH_PROXY_PORT`    | `4000`                        | Local proxy port          |
 
 Expected proxy response shape:
 
