@@ -447,7 +447,7 @@
   );
   overflow: hidden;
   touch-action: none;
-  cursor: grab;
+  cursor: default;
   box-shadow:
     var(--cv-shadow-outer),
     inset 0 1px 0 rgba(255, 255, 255, 0.9);
@@ -545,7 +545,7 @@
 }
 
 .canvas:active {
-  cursor: grabbing;
+  cursor: default;
 }
 
 .graph-layer {
@@ -622,7 +622,7 @@
     transform 220ms linear,
     opacity 240ms linear;
   will-change: transform;
-  cursor: grab;
+  cursor: default;
   box-shadow:
     7px 7px 14px rgba(145, 156, 180, 0.23),
     -6px -6px 12px rgba(255, 255, 255, 0.86),
@@ -635,7 +635,7 @@
 }
 
 .node:active {
-  cursor: grabbing;
+  cursor: default;
 }
 
 .node.dragging {
