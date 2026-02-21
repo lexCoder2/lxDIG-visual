@@ -9,6 +9,21 @@ export type EdgeCurve = {
   labelY: number;
 };
 
+// H: control-point form for canvas drawing
+export type CurveControlPoints = {
+  x1: number;
+  y1: number;
+  cx1: number;
+  cy1: number;
+  cx2: number;
+  cy2: number;
+  x2: number;
+  y2: number;
+  labelX: number;
+  labelY: number;
+  isLine: boolean;
+};
+
 export type NodeDepthVisual = {
   scale: number;
   opacity: number;
@@ -17,6 +32,13 @@ export type NodeDepthVisual = {
 export type EdgeDepthColor = {
   stroke: string;
   glow: string;
+};
+
+// K: structured label type and module-level cache
+export type StructuredLabel = {
+  primary: string;
+  extension?: string;
+  secondary?: string;
 };
 
 const EDGE_DEPTH_COLORS: EdgeDepthColor[] = [
@@ -82,6 +104,65 @@ export function buildOrganicPath(
   };
 }
 
+// H: returns control points directly for canvas drawing
+export function buildOrganicCurve(
+  source: AnchorPoint,
+  target: AnchorPoint,
+): CurveControlPoints {
+  const dx = target.x - source.x;
+  const dy = target.y - source.y;
+  const distance = Math.hypot(dx, dy);
+  const midX = (source.x + target.x) / 2;
+  const midY = (source.y + target.y) / 2;
+
+  if (distance < 72) {
+    return {
+      x1: source.x,
+      y1: source.y,
+      cx1: midX,
+      cy1: midY,
+      cx2: midX,
+      cy2: midY,
+      x2: target.x,
+      y2: target.y,
+      labelX: midX,
+      labelY: midY,
+      isLine: true,
+    };
+  }
+
+  const projectedSource = Math.abs(dx * source.nx + dy * source.ny);
+  const projectedTarget = Math.abs(dx * target.nx + dy * target.ny);
+  const projectionFactor = Math.max(
+    0.35,
+    Math.min(1.05, (projectedSource + projectedTarget) / Math.max(distance, 1)),
+  );
+  const handle = Math.max(
+    32,
+    Math.min(150, distance * 0.26 * projectionFactor),
+  );
+  const cx1 = source.x + source.nx * handle;
+  const cy1 = source.y + source.ny * handle;
+  const cx2 = target.x + target.nx * handle;
+  const cy2 = target.y + target.ny * handle;
+  const labelX = (source.x + 3 * cx1 + 3 * cx2 + target.x) / 8;
+  const labelY = (source.y + 3 * cy1 + 3 * cy2 + target.y) / 8;
+
+  return {
+    x1: source.x,
+    y1: source.y,
+    cx1,
+    cy1,
+    cx2,
+    cy2,
+    x2: target.x,
+    y2: target.y,
+    labelX,
+    labelY,
+    isLine: false,
+  };
+}
+
 export function getDepthVisual(depth: number): NodeDepthVisual {
   const clampedDepth = Math.max(0, Math.min(depth, DEPTH_VISUAL.maxDepth));
   const depthRatio = clampedDepth / Math.max(1, DEPTH_VISUAL.maxDepth);
@@ -115,27 +196,93 @@ export function pointOnPerimeter(
     return { x: center.x + halfWidth, y: center.y, nx: 1, ny: 0 };
   }
 
-  const ratioX = Math.abs(dx) / Math.max(halfWidth, 1);
-  const ratioY = Math.abs(dy) / Math.max(halfHeight, 1);
+  const safeHalfWidth = Math.max(halfWidth, 1);
+  const safeHalfHeight = Math.max(halfHeight, 1);
+  const norm = Math.hypot(dx, dy);
+  const ux = dx / norm;
+  const uy = dy / norm;
 
-  if (ratioX >= ratioY) {
-    const xSign = dx >= 0 ? 1 : -1;
-    const scale = Math.max(ratioX, 1);
+  const denominator = Math.sqrt(
+    (ux * ux) / (safeHalfWidth * safeHalfWidth) +
+      (uy * uy) / (safeHalfHeight * safeHalfHeight),
+  );
+  const distanceToPerimeter = 1 / Math.max(denominator, 1e-6);
+
+  const localX = ux * distanceToPerimeter;
+  const localY = uy * distanceToPerimeter;
+  const x = center.x + localX;
+  const y = center.y + localY;
+
+  const normalX = localX / (safeHalfWidth * safeHalfWidth);
+  const normalY = localY / (safeHalfHeight * safeHalfHeight);
+  const normalLength = Math.hypot(normalX, normalY);
+
+  return {
+    x,
+    y,
+    nx: normalLength > 1e-6 ? normalX / normalLength : ux,
+    ny: normalLength > 1e-6 ? normalY / normalLength : uy,
+  };
+}
+
+// K: label cache keyed by "label:kind" — stable since labels don't change between renders
+const labelCache = new Map<string, StructuredLabel>();
+
+export function getStructuredNodeLabel(
+  label: string,
+  kind: string,
+): StructuredLabel {
+  const key = `${label}:${kind}`;
+  const cached = labelCache.get(key);
+  if (cached) return cached;
+
+  const result = computeStructuredLabel(label, kind);
+  labelCache.set(key, result);
+  return result;
+}
+
+function computeStructuredLabel(label: string, kind: string): StructuredLabel {
+  const normalizedLabel = label.trim();
+
+  if (kind === "file") {
+    const slashIndex = Math.max(
+      normalizedLabel.lastIndexOf("/"),
+      normalizedLabel.lastIndexOf("\\"),
+    );
+    const tail =
+      slashIndex >= 0 ? normalizedLabel.slice(slashIndex + 1) : normalizedLabel;
+    const hashIndex = tail.indexOf("#");
+    const fileName = hashIndex >= 0 ? tail.slice(0, hashIndex) : tail;
+    const anchorSuffix = hashIndex >= 0 ? tail.slice(hashIndex) : "";
+    const dotIndex = fileName.lastIndexOf(".");
+
+    if (dotIndex > 0 && dotIndex < fileName.length - 1) {
+      return {
+        primary: fileName.slice(0, dotIndex),
+        extension: fileName.slice(dotIndex + 1),
+        secondary: anchorSuffix || undefined,
+      };
+    }
+
     return {
-      x: center.x + xSign * halfWidth,
-      y: center.y + dy / scale,
-      nx: xSign,
-      ny: 0,
+      primary: fileName || tail,
+      secondary: anchorSuffix || undefined,
     };
   }
 
-  const ySign = dy >= 0 ? 1 : -1;
-  const scale = Math.max(ratioY, 1);
+  const segments = normalizedLabel.split(":").filter(Boolean);
+  const isImportLike =
+    normalizedLabel.toLowerCase().startsWith("import:") ||
+    normalizedLabel.includes(":") ||
+    kind === "service";
 
+  if (!isImportLike || segments.length < 2) {
+    return { primary: normalizedLabel };
+  }
+
+  const [head, ...tailSegments] = segments;
   return {
-    x: center.x + dx / scale,
-    y: center.y + ySign * halfHeight,
-    nx: 0,
-    ny: ySign,
+    primary: head,
+    secondary: tailSegments.join(" › "),
   };
 }
