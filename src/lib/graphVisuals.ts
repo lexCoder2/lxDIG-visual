@@ -231,17 +231,22 @@ const labelCache = new Map<string, StructuredLabel>();
 export function getStructuredNodeLabel(
   label: string,
   kind: string,
+  category?: string,
 ): StructuredLabel {
-  const key = `${label}:${kind}`;
+  const key = `${label}:${kind}:${category ?? ""}`;
   const cached = labelCache.get(key);
   if (cached) return cached;
 
-  const result = computeStructuredLabel(label, kind);
+  const result = computeStructuredLabel(label, kind, category);
   labelCache.set(key, result);
   return result;
 }
 
-function computeStructuredLabel(label: string, kind: string): StructuredLabel {
+function computeStructuredLabel(
+  label: string,
+  kind: string,
+  category?: string,
+): StructuredLabel {
   const normalizedLabel = label.trim();
 
   if (kind === "file") {
@@ -270,11 +275,45 @@ function computeStructuredLabel(label: string, kind: string): StructuredLabel {
     };
   }
 
+  const scopedIdMatch = normalizedLabel.match(
+    /^[^:]+:(doc|sec|task|feature|ep|learn|claim):(.+)$/i,
+  );
+  if (scopedIdMatch) {
+    const scopeType = scopedIdMatch[1].toLowerCase();
+    const remainder = scopedIdMatch[2];
+
+    if (scopeType === "doc" || scopeType === "sec") {
+      const pathSegments = remainder.split(":");
+      const tail = pathSegments[pathSegments.length - 1] || remainder;
+      return {
+        primary: tail,
+        secondary: pathSegments.slice(0, -1).join(" › ") || undefined,
+      };
+    }
+
+    return {
+      primary: `${scopeType.toUpperCase()}`,
+      secondary: remainder,
+    };
+  }
+
+  const scipLikeSegments = normalizedLabel.split("::").filter(Boolean);
+  if (scipLikeSegments.length > 1) {
+    const [head, ...tail] = scipLikeSegments;
+    return {
+      primary: head,
+      secondary: tail.join(" › "),
+    };
+  }
+
   const segments = normalizedLabel.split(":").filter(Boolean);
   const isImportLike =
     normalizedLabel.toLowerCase().startsWith("import:") ||
     normalizedLabel.includes(":") ||
-    kind === "service";
+    kind === "service" ||
+    category === "docs" ||
+    category === "progress" ||
+    category === "memory";
 
   if (!isImportLike || segments.length < 2) {
     return { primary: normalizedLabel };

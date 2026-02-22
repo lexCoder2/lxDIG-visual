@@ -3,11 +3,34 @@
   --cv-surface: #eeeff2;
   --cv-surface-strong: #eef2f7;
   --cv-surface-soft: #eeeef8;
+  --cv-surface-overlay: rgba(246, 248, 255, 0.75);
+  --cv-surface-tint: rgba(236, 238, 255, 0.72);
+  --cv-surface-tint-strong: rgba(224, 226, 252, 0.88);
+  --cv-surface-code: rgba(247, 249, 255, 0.92);
+  --cv-surface-code-meta: rgba(239, 244, 255, 0.9);
+  --cv-surface-markdown: rgba(249, 251, 255, 0.94);
+  --cv-surface-indicator: rgba(130, 145, 178, 0.12);
+  --cv-surface-indicator-strong: rgba(130, 145, 178, 0.14);
   --cv-text: #252a36;
   --cv-text-muted: #697184;
+  --cv-text-subtle: #5a6786;
+  --cv-text-strong: #2f3f5a;
   --cv-line: rgba(46, 56, 78, 0.16);
   --cv-line-strong: rgba(36, 46, 67, 0.24);
+  --cv-border-card: rgba(255, 255, 255, 0.55);
+  --cv-border-control: rgba(255, 255, 255, 0.72);
+  --cv-border-soft: rgba(151, 163, 194, 0.35);
+  --cv-border-soft-strong: rgba(151, 163, 194, 0.5);
+  --cv-focus-border: rgba(95, 132, 242, 0.45);
+  --cv-focus-fill: rgba(231, 236, 245, 0.96);
   --cv-accent: #2f5ef4;
+  --cv-accent-grad: linear-gradient(
+    180deg,
+    rgba(95, 132, 242, 0.95),
+    rgba(63, 98, 230, 0.94)
+  );
+  --cv-muted-track: #b8c0d1;
+  --cv-white: #ffffff;
   --cv-glass: linear-gradient(
     180deg,
     rgba(255, 255, 255, 0.55),
@@ -22,6 +45,81 @@
   --cv-shadow-inset:
     inset 1px 1px 2px rgba(255, 255, 255, 0.72),
     inset -1px -1px 2px rgba(130, 137, 151, 0.2);
+  --cv-shadow-card:
+    var(--cv-shadow-outer), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --cv-shadow-overlay:
+    10px 10px 20px rgba(122, 130, 146, 0.24),
+    -9px -9px 19px rgba(255, 255, 255, 0.7),
+    inset 0 1px 0 rgba(255, 255, 255, 0.78);
+  --cv-shadow-chip:
+    4px 4px 10px rgba(132, 140, 156, 0.24),
+    -4px -4px 10px rgba(255, 255, 255, 0.78),
+    inset 0 1px 0 rgba(255, 255, 255, 0.68);
+  --cv-shadow-node:
+    7px 7px 14px rgba(145, 156, 180, 0.23),
+    -6px -6px 12px rgba(255, 255, 255, 0.86),
+    inset 0 1px 0 rgba(255, 255, 255, 0.92);
+  --cv-shadow-node-active:
+    0 0 0 2px rgba(129, 152, 211, 0.2), 8px 8px 16px rgba(136, 148, 174, 0.24),
+    -7px -7px 14px rgba(255, 255, 255, 0.86);
+  --cv-shadow-node-far: 4px 4px 10px rgba(146, 158, 183, 0.16);
+  --cv-shadow-node-highlight: -6px -6px 12px rgba(255, 255, 255, 0.82);
+  --cv-shadow-node-highlight-soft: -6px -6px 12px rgba(255, 255, 255, 0.84);
+
+  --cv-status-success-text: #2a6b45;
+  --cv-status-success-bg: rgba(75, 168, 112, 0.14);
+  --cv-status-success-border: rgba(75, 168, 112, 0.28);
+  --cv-status-danger-text: #944444;
+  --cv-status-danger-bg: rgba(193, 92, 92, 0.14);
+  --cv-status-danger-border: rgba(193, 92, 92, 0.28);
+  --cv-status-warn-text: #866226;
+  --cv-status-warn-bg: rgba(188, 143, 49, 0.14);
+  --cv-status-warn-border: rgba(188, 143, 49, 0.28);
+
+  --cv-code-keyword: #7c3aed;
+  --cv-code-symbol: #1d4ed8;
+  --cv-code-string: #0f766e;
+  --cv-code-number: #b45309;
+  --cv-code-comment: #6b7280;
+
+  --cv-node-bg: linear-gradient(180deg, #f7f9ff, #edf1fb);
+  --cv-node-bg-active: linear-gradient(180deg, #f3f7ff, #e9effc);
+  --cv-node-bg-layer: linear-gradient(180deg, #f5f6ff, #ebedfb);
+  --cv-node-bg-service: linear-gradient(180deg, #eef9ff, #e3f0fb);
+  --cv-node-bg-module: linear-gradient(180deg, #f8f5ff, #ede9fb);
+  --cv-node-bg-loop: linear-gradient(180deg, #faedf1, #f4e2e9);
+  --cv-node-border: rgba(156, 169, 198, 0.62);
+  --cv-node-border-hover: rgba(124, 152, 215, 0.68);
+  --cv-node-border-active: rgba(111, 135, 191, 0.72);
+  --cv-node-border-visited: rgba(208, 176, 123, 0.74);
+  --cv-node-border-loop: rgba(211, 132, 146, 0.76);
+  --cv-node-border-relative: rgba(129, 178, 227, 0.76);
+  --cv-node-ring-visited: rgba(208, 176, 123, 0.2);
+  --cv-node-ring-loop: rgba(211, 132, 146, 0.21);
+  --cv-node-ring-relative: rgba(129, 178, 227, 0.2);
+
+  --cv-node-status-completed-border: rgba(118, 189, 136, 0.7);
+  --cv-node-status-completed-bg: linear-gradient(180deg, #f0fdf4, #dcfce7);
+  --cv-node-status-completed-ring: rgba(118, 189, 136, 0.18);
+  --cv-node-status-completed-shadow: rgba(118, 189, 136, 0.15);
+  --cv-node-status-progress-border: rgba(96, 165, 250, 0.7);
+  --cv-node-status-progress-bg: linear-gradient(180deg, #eff6ff, #dbeafe);
+  --cv-node-status-progress-ring: rgba(96, 165, 250, 0.18);
+  --cv-node-status-progress-shadow: rgba(96, 165, 250, 0.15);
+  --cv-node-status-blocked-border: rgba(239, 68, 68, 0.7);
+  --cv-node-status-blocked-bg: linear-gradient(180deg, #fef2f2, #fee2e2);
+  --cv-node-status-blocked-ring: rgba(239, 68, 68, 0.18);
+  --cv-node-status-blocked-shadow: rgba(239, 68, 68, 0.15);
+  --cv-node-status-pending-border: rgba(161, 161, 170, 0.65);
+  --cv-node-status-pending-bg: linear-gradient(180deg, #fafafa, #f4f4f5);
+  --cv-node-status-pending-ring: rgba(161, 161, 170, 0.15);
+  --cv-node-status-pending-shadow: rgba(161, 161, 170, 0.12);
+
+  --text: var(--cv-text);
+  --text-muted: var(--cv-text-muted);
+  --line: var(--cv-line);
+  --line-strong: var(--cv-line-strong);
+  --panel: var(--cv-surface-strong);
 }
 
 .theme-neumorph {
@@ -34,4 +132,127 @@
   --cv-line: rgba(42, 52, 74, 0.16);
   --cv-line-strong: rgba(34, 43, 61, 0.22);
   --cv-accent: #416df2;
+}
+
+.theme-dark {
+  --cv-bg: #141518;
+  --cv-surface: #21242a;
+  --cv-surface-strong: #21252c;
+  --cv-surface-soft: #1f2431;
+  --cv-surface-overlay: rgba(39, 48, 64, 0.78);
+  --cv-surface-tint: rgba(55, 72, 110, 0.32);
+  --cv-surface-tint-strong: rgba(65, 85, 128, 0.44);
+  --cv-surface-code: rgba(27, 33, 46, 0.95);
+  --cv-surface-code-meta: rgba(37, 45, 62, 0.92);
+  --cv-surface-markdown: rgba(30, 37, 51, 0.94);
+  --cv-surface-indicator: rgba(86, 104, 145, 0.2);
+  --cv-surface-indicator-strong: rgba(126, 148, 198, 0.3);
+
+  --cv-text: #e6ebf5;
+  --cv-text-muted: #a7b2c8;
+  --cv-text-subtle: #c6d0e3;
+  --cv-text-strong: #f0f5ff;
+
+  --cv-line: rgba(97, 110, 140, 0.22);
+  --cv-line-strong: rgba(70, 79, 101, 0.34);
+  --cv-border-card: rgba(70, 81, 103, 0.34);
+  --cv-border-control: rgba(92, 106, 137, 0.38);
+  --cv-border-soft: rgba(90, 104, 132, 0.42);
+  --cv-border-soft-strong: rgba(97, 115, 151, 0.56);
+  --cv-focus-border: rgba(114, 131, 168, 0.72);
+  --cv-focus-fill: rgba(53, 66, 90, 0.95);
+
+  --cv-accent: #748fc7;
+  --cv-accent-grad: linear-gradient(
+    180deg,
+    rgba(98, 151, 255, 0.96),
+    rgba(75, 126, 228, 0.94)
+  );
+  --cv-muted-track: #5f6f92;
+  --cv-white: #1f2635;
+  --cv-glass: linear-gradient(
+    180deg,
+    rgba(49, 61, 83, 0.78),
+    rgba(29, 37, 54, 0.66)
+  );
+
+  --cv-shadow-outer:
+    10px 10px 22px rgba(7, 10, 16, 0.52), -8px -8px 18px rgba(50, 61, 83, 0.35);
+  --cv-shadow-soft:
+    5px 5px 12px rgba(7, 10, 16, 0.42), -4px -4px 10px rgba(56, 68, 93, 0.32);
+  --cv-shadow-inset:
+    inset 1px 1px 2px rgba(95, 100, 112, 0.2),
+    inset -1px -1px 2px rgba(8, 12, 18, 0.45);
+  --cv-shadow-card:
+    var(--cv-shadow-outer), inset 0 1px 0 rgba(118, 136, 176, 0.2);
+  --cv-shadow-overlay:
+    12px 12px 24px rgba(5, 8, 14, 0.58), -9px -9px 19px rgba(61, 74, 101, 0.34),
+    inset 0 1px 0 rgba(125, 144, 186, 0.2);
+  --cv-shadow-chip:
+    4px 4px 10px rgba(7, 10, 16, 0.5), -4px -4px 10px rgba(72, 86, 117, 0.3),
+    inset 0 1px 0 rgba(128, 146, 188, 0.2);
+  --cv-shadow-node:
+    8px 8px 16px rgba(6, 9, 14, 0.56), -6px -6px 12px rgba(61, 74, 101, 0.32),
+    inset 0 1px 0 rgba(127, 145, 186, 0.2);
+  --cv-shadow-node-active:
+    0 0 0 2px rgba(108, 156, 255, 0.26), 9px 9px 18px rgba(6, 9, 14, 0.62),
+    -7px -7px 14px rgba(66, 81, 110, 0.36);
+  --cv-shadow-node-far: 4px 4px 10px rgba(8, 12, 20, 0.45);
+  --cv-shadow-node-highlight: -6px -6px 12px rgba(61, 74, 101, 0.32);
+  --cv-shadow-node-highlight-soft: -6px -6px 12px rgba(61, 74, 101, 0.28);
+
+  --cv-status-success-text: #8de3b0;
+  --cv-status-success-bg: rgba(56, 125, 83, 0.33);
+  --cv-status-success-border: rgba(92, 186, 130, 0.52);
+  --cv-status-danger-text: #ffb3b3;
+  --cv-status-danger-bg: rgba(148, 64, 64, 0.34);
+  --cv-status-danger-border: rgba(227, 118, 118, 0.54);
+  --cv-status-warn-text: #ffd692;
+  --cv-status-warn-bg: rgba(149, 106, 43, 0.34);
+  --cv-status-warn-border: rgba(220, 169, 79, 0.56);
+
+  --cv-code-keyword: #c084fc;
+  --cv-code-symbol: #7dd3fc;
+  --cv-code-string: #6ee7b7;
+  --cv-code-number: #fdba74;
+  --cv-code-comment: #9aa8c4;
+
+  --cv-node-bg: linear-gradient(180deg, #2a3346, #222a3a);
+  --cv-node-bg-active: linear-gradient(180deg, #31415d, #27344c);
+  --cv-node-bg-layer: linear-gradient(180deg, #303956, #25304a);
+  --cv-node-bg-service: linear-gradient(180deg, #253e54, #203146);
+  --cv-node-bg-module: linear-gradient(180deg, #35324d, #292742);
+  --cv-node-bg-loop: linear-gradient(180deg, #483248, #3a2738);
+  --cv-node-border: rgba(148, 168, 208, 0.56);
+  --cv-node-border-hover: rgba(141, 182, 255, 0.72);
+  --cv-node-border-active: rgba(126, 171, 255, 0.8);
+  --cv-node-border-visited: rgba(226, 187, 118, 0.78);
+  --cv-node-border-loop: rgba(223, 136, 164, 0.82);
+  --cv-node-border-relative: rgba(126, 189, 247, 0.82);
+  --cv-node-ring-visited: rgba(226, 187, 118, 0.26);
+  --cv-node-ring-loop: rgba(223, 136, 164, 0.28);
+  --cv-node-ring-relative: rgba(126, 189, 247, 0.28);
+
+  --cv-node-status-completed-border: rgba(110, 211, 150, 0.72);
+  --cv-node-status-completed-bg: linear-gradient(180deg, #28473a, #213a30);
+  --cv-node-status-completed-ring: rgba(110, 211, 150, 0.24);
+  --cv-node-status-completed-shadow: rgba(90, 180, 129, 0.22);
+  --cv-node-status-progress-border: rgba(114, 182, 255, 0.76);
+  --cv-node-status-progress-bg: linear-gradient(180deg, #243f5f, #1f344f);
+  --cv-node-status-progress-ring: rgba(114, 182, 255, 0.24);
+  --cv-node-status-progress-shadow: rgba(101, 167, 240, 0.22);
+  --cv-node-status-blocked-border: rgba(255, 138, 138, 0.76);
+  --cv-node-status-blocked-bg: linear-gradient(180deg, #4d2b34, #3f232b);
+  --cv-node-status-blocked-ring: rgba(255, 138, 138, 0.24);
+  --cv-node-status-blocked-shadow: rgba(215, 102, 102, 0.22);
+  --cv-node-status-pending-border: rgba(177, 188, 214, 0.68);
+  --cv-node-status-pending-bg: linear-gradient(180deg, #343c4c, #2b3240);
+  --cv-node-status-pending-ring: rgba(177, 188, 214, 0.2);
+  --cv-node-status-pending-shadow: rgba(143, 153, 178, 0.2);
+
+  --text: var(--cv-text);
+  --text-muted: var(--cv-text-muted);
+  --line: var(--cv-line);
+  --line-strong: var(--cv-line-strong);
+  --panel: var(--cv-surface-strong);
 }

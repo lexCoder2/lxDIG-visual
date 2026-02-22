@@ -42,6 +42,20 @@ function getCubicPointAt(
   );
 }
 
+function getCurvePoint(curve: ReturnType<typeof buildOrganicCurve>, t: number) {
+  if (curve.isLine) {
+    return {
+      x: curve.x1 + (curve.x2 - curve.x1) * t,
+      y: curve.y1 + (curve.y2 - curve.y1) * t,
+    };
+  }
+
+  return {
+    x: getCubicPointAt(curve.x1, curve.cx1, curve.cx2, curve.x2, t),
+    y: getCubicPointAt(curve.y1, curve.cy1, curve.cy2, curve.y2, t),
+  };
+}
+
 export const EdgeCanvas = memo(function EdgeCanvas({
   edges,
   nodeGeometryById,
@@ -71,9 +85,15 @@ export const EdgeCanvas = memo(function EdgeCanvas({
       edgeGlow: string;
       isSelectedRelative: boolean;
       label?: string;
+      direction?: PositionedEdge["direction"];
+      showDirectionMarker: boolean;
     };
 
     const edgesToDraw: EdgeDrawData[] = [];
+
+    const directedEdgeKeySet = new Set(
+      edges.map((edge) => `${edge.source}::${edge.target}`),
+    );
 
     for (const edge of edges) {
       const srcGeom = nodeGeometryById[edge.source];
@@ -119,6 +139,12 @@ export const EdgeCanvas = memo(function EdgeCanvas({
       );
       const edgeColor = getEdgeDepthColor(edgeDepth);
       const isSelectedRelative = Boolean(selectedRelativeEdgeById[edge.id]);
+      const hasReverseEdge = directedEdgeKeySet.has(
+        `${edge.target}::${edge.source}`,
+      );
+      const showDirectionMarker = Boolean(
+        edge.direction && edge.direction !== "undirected" && !hasReverseEdge,
+      );
 
       edgesToDraw.push({
         curve: finalCurve,
@@ -128,6 +154,8 @@ export const EdgeCanvas = memo(function EdgeCanvas({
         edgeGlow: edgeColor.glow,
         isSelectedRelative,
         label: edge.label,
+        direction: edge.direction,
+        showDirectionMarker,
       });
     }
 
@@ -196,6 +224,52 @@ export const EdgeCanvas = memo(function EdgeCanvas({
           curve.y2,
         );
       }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // One-way direction marker pass (open arrowhead near flow destination)
+    for (const data of edgesToDraw) {
+      if (!data.showDirectionMarker || !data.direction) continue;
+
+      const forward = data.direction === "outbound";
+      const markerT = forward ? 0.78 : 0.22;
+      const tip = getCurvePoint(data.curve, markerT);
+      const sample = getCurvePoint(
+        data.curve,
+        markerT + (forward ? -0.06 : 0.06),
+      );
+      const vx = tip.x - sample.x;
+      const vy = tip.y - sample.y;
+      const len = Math.hypot(vx, vy);
+      if (len < 0.001) continue;
+
+      const ux = vx / len;
+      const uy = vy / len;
+      const arrowLength = Math.max(7, data.edgeWidth * 5.1);
+      const arrowSpread = Math.max(4, data.edgeWidth * 2.8);
+      const baseX = tip.x - ux * arrowLength;
+      const baseY = tip.y - uy * arrowLength;
+      const px = -uy;
+      const py = ux;
+      const leftX = baseX + px * arrowSpread;
+      const leftY = baseY + py * arrowSpread;
+      const rightX = baseX - px * arrowSpread;
+      const rightY = baseY - py * arrowSpread;
+
+      ctx.save();
+      ctx.strokeStyle = data.edgeStroke;
+      ctx.lineWidth = Math.max(1.1, data.edgeWidth + 0.15);
+      ctx.globalAlpha = data.isSelectedRelative
+        ? Math.min(1, data.edgeOpacity + 0.26)
+        : Math.min(1, data.edgeOpacity * 0.96);
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      ctx.moveTo(leftX, leftY);
+      ctx.lineTo(tip.x, tip.y);
+      ctx.moveTo(rightX, rightY);
+      ctx.lineTo(tip.x, tip.y);
       ctx.stroke();
       ctx.restore();
     }

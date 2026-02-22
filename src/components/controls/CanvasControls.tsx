@@ -2,7 +2,18 @@ import { DepthControl } from "./DepthControl";
 import { MotionControl } from "./MotionControl";
 import { RefreshToggleControl } from "./RefreshToggleControl";
 import { SyncBadgeControl } from "./SyncBadgeControl";
-import type { SemanticNodeType } from "../../types/graph";
+import { ViewModeControl } from "./ViewModeControl";
+import { StructureControls } from "./StructureControls";
+import { ArchitectureControls } from "./ArchitectureControls";
+import { PlanControls } from "./PlanControls";
+import { DocumentationControls } from "./DocumentationControls";
+import type {
+  ViewMode,
+  StructureFilters,
+  ArchitectureFilters,
+  PlanFilters,
+  DocumentationFilters,
+} from "../../types/graph";
 
 type CanvasControlsProps = {
   syncStatus: "idle" | "syncing" | "error";
@@ -10,13 +21,24 @@ type CanvasControlsProps = {
   autoRefreshEnabled: boolean;
   connectionDepth: number;
   motionSpeedFactor: number;
-  nodeTypeFilters: Record<SemanticNodeType, boolean>;
-  nodeTypeFilterOrder: SemanticNodeType[];
+  viewMode: ViewMode;
+  structureFilters: StructureFilters;
+  architectureFilters: ArchitectureFilters;
+  planFilters: PlanFilters;
+  documentationFilters: DocumentationFilters;
   onToggleAutoRefresh: () => void;
   onDepthUp: () => void;
   onDepthDown: () => void;
   onChangeMotion: (value: number) => void;
-  onToggleNodeTypeFilter: (type: SemanticNodeType) => void;
+  onChangeViewMode: (mode: ViewMode) => void;
+  onToggleStructureFilter: (key: keyof StructureFilters) => void;
+  onToggleArchitectureViewType: () => void;
+  onToggleArchitectureViolationsOnly: () => void;
+  onChangePlanStatusFilter: (status: PlanFilters["statusFilter"]) => void;
+  onTogglePlanImplementingFiles: () => void;
+  onTogglePlanTestCoverage: () => void;
+  onChangeDocKindFilter: (kind: DocumentationFilters["kindFilter"]) => void;
+  onToggleDocLinkedCode: () => void;
 };
 
 export function CanvasControls(props: CanvasControlsProps) {
@@ -26,13 +48,24 @@ export function CanvasControls(props: CanvasControlsProps) {
     autoRefreshEnabled,
     connectionDepth,
     motionSpeedFactor,
-    nodeTypeFilters,
-    nodeTypeFilterOrder,
+    viewMode,
+    structureFilters,
+    architectureFilters,
+    planFilters,
+    documentationFilters,
     onToggleAutoRefresh,
     onDepthUp,
     onDepthDown,
     onChangeMotion,
-    onToggleNodeTypeFilter,
+    onChangeViewMode,
+    onToggleStructureFilter,
+    onToggleArchitectureViewType,
+    onToggleArchitectureViolationsOnly,
+    onChangePlanStatusFilter,
+    onTogglePlanImplementingFiles,
+    onTogglePlanTestCoverage,
+    onChangeDocKindFilter,
+    onToggleDocLinkedCode,
   } = props;
 
   return (
@@ -52,6 +85,10 @@ export function CanvasControls(props: CanvasControlsProps) {
         checked={autoRefreshEnabled}
         onToggle={onToggleAutoRefresh}
       />
+      <ViewModeControl
+        viewMode={viewMode}
+        onChangeViewMode={onChangeViewMode}
+      />
       <DepthControl
         connectionDepth={connectionDepth}
         onDepthUp={onDepthUp}
@@ -61,23 +98,38 @@ export function CanvasControls(props: CanvasControlsProps) {
         motionSpeedFactor={motionSpeedFactor}
         onChangeMotion={onChangeMotion}
       />
-      <div
-        className="node-type-filters canvas-controls-node-types"
-        role="group"
-        aria-label="Node type visibility"
-      >
-        {nodeTypeFilterOrder.map((type) => (
-          <RefreshToggleControl
-            key={type}
-            label={type}
-            checked={nodeTypeFilters[type]}
-            onToggle={() => onToggleNodeTypeFilter(type)}
-            wrapperClassName="node-type-switch-wrap"
-            switchClassName="node-type-switch"
-            labelClassName="node-type-switch-label"
-          />
-        ))}
-      </div>
+
+      {viewMode === "structure" && (
+        <StructureControls
+          filters={structureFilters}
+          onToggleFilter={onToggleStructureFilter}
+        />
+      )}
+
+      {viewMode === "architecture" && (
+        <ArchitectureControls
+          filters={architectureFilters}
+          onToggleViewType={onToggleArchitectureViewType}
+          onToggleViolationsOnly={onToggleArchitectureViolationsOnly}
+        />
+      )}
+
+      {viewMode === "plan" && (
+        <PlanControls
+          filters={planFilters}
+          onChangeStatusFilter={onChangePlanStatusFilter}
+          onToggleImplementingFiles={onTogglePlanImplementingFiles}
+          onToggleTestCoverage={onTogglePlanTestCoverage}
+        />
+      )}
+
+      {viewMode === "documentation" && (
+        <DocumentationControls
+          filters={documentationFilters}
+          onChangeKindFilter={onChangeDocKindFilter}
+          onToggleLinkedCode={onToggleDocLinkedCode}
+        />
+      )}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 export const MIN_CONNECTION_DEPTH = 1;
 export const MAX_CONNECTION_DEPTH = 4;
-export const DEFAULT_CONNECTION_DEPTH = 3;
+export const DEFAULT_CONNECTION_DEPTH = 2;
 export const MAX_VISIBLE_SIBLINGS = 20;
 export const AUTO_REFRESH_MS = 5_000;
 

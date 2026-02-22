@@ -5,6 +5,18 @@ import {
   type ReactNode,
   type WheelEvent as ReactWheelEvent,
 } from "react";
+import type { IconType } from "react-icons";
+import {
+  FaBrain,
+  FaCircle,
+  FaClipboardList,
+  FaCode,
+  FaCubes,
+  FaFileAlt,
+  FaFolder,
+  FaProjectDiagram,
+  FaSitemap,
+} from "react-icons/fa";
 import {
   CANVAS,
   NODE_HEIGHT_BY_KIND,
@@ -13,27 +25,38 @@ import {
 import { getDepthVisual, getStructuredNodeLabel } from "../lib/graphVisuals";
 import type { LayoutFrame } from "../lib/layoutEngine";
 import type {
+  NodeKind,
   PositionedNode,
   SemanticNodeType,
   ViewportState,
 } from "../types/graph";
 import { EdgeCanvas } from "./EdgeCanvas";
 
-function getKindIndicator(kind: PositionedNode["kind"]): {
-  icon: string;
+function getKindIndicator(kind: NodeKind): {
+  icon: IconType;
   label: string;
 } {
   switch (kind) {
-    case "layer":
-      return { icon: "🗂️", label: "Layer" };
-    case "module":
-      return { icon: "📁", label: "Module" };
-    case "service":
-      return { icon: "⚙️", label: "Service" };
-    case "file":
-      return { icon: "📄", label: "File" };
+    case "project":
+      return { icon: FaProjectDiagram, label: "Project" };
+    case "structure":
+      return { icon: FaFolder, label: "Structure" };
+    case "code":
+      return { icon: FaCode, label: "Code" };
+    case "docs":
+      return { icon: FaFileAlt, label: "Docs" };
+    case "progress":
+      return { icon: FaClipboardList, label: "Progress" };
+    case "memory":
+      return { icon: FaBrain, label: "Memory" };
+    case "architecture":
+      return { icon: FaSitemap, label: "Architecture" };
+    case "system":
+      return { icon: FaCubes, label: "System" };
+    case "unknown":
+      return { icon: FaCircle, label: "Unknown" };
     default:
-      return { icon: "•", label: "Node" };
+      return { icon: FaCircle, label: "Node" };
   }
 }
 
@@ -66,6 +89,7 @@ type GraphCanvasProps = {
   lastVisitedNodeId: string | null;
   depthById: Record<string, number>;
   loopBridgeNodeById: Record<string, boolean>;
+  mainParentNodeById: Record<string, boolean>;
   selectedRelativeNodeById: Record<string, boolean>;
   selectedRelativeEdgeById: Record<string, boolean>;
   activeDraggedNodeId: string | null;
@@ -115,6 +139,7 @@ export function GraphCanvas(props: GraphCanvasProps) {
     lastVisitedNodeId,
     depthById,
     loopBridgeNodeById,
+    mainParentNodeById,
     selectedRelativeNodeById,
     selectedRelativeEdgeById,
     activeDraggedNodeId,
@@ -151,8 +176,10 @@ export function GraphCanvas(props: GraphCanvasProps) {
 
     frame.nodes.forEach((node) => {
       const visual = getDepthVisual(node.depth);
-      const halfWidth = (NODE_WIDTH_BY_KIND[node.kind] * visual.scale) / 2;
-      const halfHeight = (NODE_HEIGHT_BY_KIND[node.kind] * visual.scale) / 2;
+      const halfWidth =
+        (NODE_WIDTH_BY_KIND[node.visualKind] * visual.scale) / 2;
+      const halfHeight =
+        (NODE_HEIGHT_BY_KIND[node.visualKind] * visual.scale) / 2;
 
       minX = Math.min(minX, node.x - halfWidth);
       minY = Math.min(minY, node.y - halfHeight);
@@ -190,8 +217,8 @@ export function GraphCanvas(props: GraphCanvasProps) {
         >
       >((acc, node) => {
         const visual = getDepthVisual(node.depth);
-        const width = NODE_WIDTH_BY_KIND[node.kind] * visual.scale;
-        const height = NODE_HEIGHT_BY_KIND[node.kind] * visual.scale;
+        const width = NODE_WIDTH_BY_KIND[node.visualKind] * visual.scale;
+        const height = NODE_HEIGHT_BY_KIND[node.visualKind] * visual.scale;
 
         acc[node.id] = {
           x: node.x,
@@ -243,8 +270,8 @@ export function GraphCanvas(props: GraphCanvasProps) {
         />
 
         {frame.nodes.map((node: PositionedNode) => {
-          const width = NODE_WIDTH_BY_KIND[node.kind];
-          const height = NODE_HEIGHT_BY_KIND[node.kind];
+          const width = NODE_WIDTH_BY_KIND[node.visualKind];
+          const height = NODE_HEIGHT_BY_KIND[node.visualKind];
           const visual = getDepthVisual(node.depth);
 
           // I: skip off-screen nodes
@@ -252,7 +279,11 @@ export function GraphCanvas(props: GraphCanvasProps) {
             return null;
           }
 
-          const structuredLabel = getStructuredNodeLabel(node.label, node.kind);
+          const structuredLabel = getStructuredNodeLabel(
+            node.label,
+            node.visualKind,
+            node.kind,
+          );
           const kindIndicator = getKindIndicator(node.kind);
           const semanticIndicator = getSemanticIndicator(node.semanticType);
 
@@ -260,7 +291,7 @@ export function GraphCanvas(props: GraphCanvasProps) {
             <button
               key={node.id}
               type="button"
-              className={`node ${node.kind} ${node.id === selectedNodeId ? "active" : ""} ${node.id === lastVisitedNodeId ? "visited" : ""} ${loopBridgeNodeById[node.id] ? "loop-bridge" : ""} ${selectedRelativeNodeById[node.id] ? "relative" : ""} ${activeDraggedNodeId === node.id ? "dragging" : ""} ${node.depth >= 3 ? "far" : ""}`}
+              className={`node ${node.visualKind} group-${node.kind} ${node.id === selectedNodeId ? "active" : ""} ${node.id === lastVisitedNodeId ? "visited" : ""} ${loopBridgeNodeById[node.id] ? "loop-bridge" : ""} ${mainParentNodeById[node.id] ? "parent-main" : ""} ${selectedRelativeNodeById[node.id] ? "relative" : ""} ${activeDraggedNodeId === node.id ? "dragging" : ""} ${node.depth >= 3 ? "far" : ""} ${node.status ? `status-${node.status}` : ""}`}
               style={{
                 width: `${width}px`,
                 height: `${height}px`,
@@ -281,7 +312,7 @@ export function GraphCanvas(props: GraphCanvasProps) {
                   title={kindIndicator.label}
                 >
                   <span className="node-indicator-icon">
-                    {kindIndicator.icon}
+                    <kindIndicator.icon size={9} />
                   </span>
                   <span className="node-indicator-text">
                     {kindIndicator.label}

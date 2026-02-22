@@ -1,0 +1,13 @@
+name: graph-server
+version: 0.0.1
+schema: v1
+mcpServers:
+  - name: stratsolver-graph
+    type: stdio
+    command: /home/alex_rod/.nvm/versions/node/v22.17.0/bin/node
+    args:
+      - /home/alex_rod/code-graph-server/dist/server.js
+    env:
+      MEMGRAPH_HOST: "localhost"
+      MEMGRAPH_PORT: "7687"
+      MCP_TRANSPORT: "stdio"

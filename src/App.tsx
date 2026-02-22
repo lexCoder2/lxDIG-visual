@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { FaMoon, FaSun } from "react-icons/fa";
 import "./App.css";
 import {
   CAMERA_VISUAL,
@@ -10,31 +11,26 @@ import { CanvasControls } from "./components/controls/CanvasControls";
 import { ProjectControl } from "./components/controls/ProjectControl";
 import { GraphCanvas } from "./components/GraphCanvas";
 import { GraphFooter } from "./components/GraphFooter";
+import { NodeViewer } from "./components/NodeViewer";
 import { useGraphController } from "./hooks/useGraphController";
 import { getDepthVisual } from "./lib/graphVisuals";
 import { computeLayoutTopology } from "./lib/layoutEngine";
 import type { LayoutFrame, LayoutTopology } from "./lib/layoutEngine";
 import { useGraphStore } from "./state/graphStore";
 import type {
+  GraphEdgeEntity,
   GraphNodeEntity,
   PositionedNode,
-  SemanticNodeType,
 } from "./types/graph";
 import { LogoIcon } from "./assets/LogoIcon";
-
-const NODE_TYPE_FILTERS: SemanticNodeType[] = [
-  "function",
-  "class",
-  "import",
-  "export",
-  "variable",
-];
 
 const STORAGE_KEYS = {
   motionSpeedFactor: "code-visual:motionSpeedFactor",
   connectionDepth: "code-visual:connectionDepth",
-  nodeTypeFilters: "code-visual:nodeTypeFilters",
+  themeMode: "code-visual:themeMode",
 } as const;
+
+type ThemeMode = "light" | "dark";
 
 const EMPTY_FRAME: LayoutFrame = { nodes: [], edges: [] };
 
@@ -61,33 +57,13 @@ function readStoredNumber(key: string, fallback: number): number {
   }
 }
 
-function readStoredNodeTypeFilters(): Record<SemanticNodeType, boolean> {
-  const fallback: Record<SemanticNodeType, boolean> = {
-    function: true,
-    class: true,
-    import: true,
-    export: true,
-    variable: true,
-  };
-
-  if (typeof window === "undefined") return fallback;
-
+function readStoredThemeMode(): ThemeMode {
+  if (typeof window === "undefined") return "light";
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEYS.nodeTypeFilters);
-    if (!raw) return fallback;
-
-    const parsed = JSON.parse(raw) as Partial<
-      Record<SemanticNodeType, boolean>
-    >;
-    return {
-      function: parsed.function ?? true,
-      class: parsed.class ?? true,
-      import: parsed.import ?? true,
-      export: parsed.export ?? true,
-      variable: parsed.variable ?? true,
-    };
+    const raw = window.localStorage.getItem(STORAGE_KEYS.themeMode);
+    return raw === "dark" ? "dark" : "light";
   } catch {
-    return fallback;
+    return "light";
   }
 }
 
@@ -106,11 +82,34 @@ function App() {
     setAutoRefreshEnabled,
     isSyncing,
   } = useGraphController();
+
+  // View mode and filters from store
+  const viewMode = useGraphStore((state) => state.viewMode);
+  const structureFilters = useGraphStore((state) => state.structureFilters);
+  const architectureFilters = useGraphStore(
+    (state) => state.architectureFilters,
+  );
+  const planFilters = useGraphStore((state) => state.planFilters);
+  const documentationFilters = useGraphStore(
+    (state) => state.documentationFilters,
+  );
+  const setViewMode = useGraphStore((state) => state.setViewMode);
+  const setStructureFilters = useGraphStore(
+    (state) => state.setStructureFilters,
+  );
+  const setArchitectureFilters = useGraphStore(
+    (state) => state.setArchitectureFilters,
+  );
+  const setPlanFilters = useGraphStore((state) => state.setPlanFilters);
+  const setDocumentationFilters = useGraphStore(
+    (state) => state.setDocumentationFilters,
+  );
+
   const [motionSpeedFactor, setMotionSpeedFactor] = useState(() =>
     readStoredNumber(STORAGE_KEYS.motionSpeedFactor, 1.6),
   );
-  const [nodeTypeFilters, setNodeTypeFilters] = useState(() =>
-    readStoredNodeTypeFilters(),
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() =>
+    readStoredThemeMode(),
   );
 
   // G: stable target frame (async, set by worker response)
@@ -214,20 +213,6 @@ function App() {
   }, [motionSpeedFactor]);
 
   useEffect(() => {
-    const storedDepth = Math.round(
-      readStoredNumber(
-        STORAGE_KEYS.connectionDepth,
-        graphState.connectionDepth,
-      ),
-    );
-    if (storedDepth !== graphState.connectionDepth) {
-      graphState.setConnectionDepth(storedDepth);
-    }
-    // run once at init
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
     if (typeof window === "undefined") return;
     try {
       window.localStorage.setItem(
@@ -242,14 +227,11 @@ function App() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem(
-        STORAGE_KEYS.nodeTypeFilters,
-        JSON.stringify(nodeTypeFilters),
-      );
+      window.localStorage.setItem(STORAGE_KEYS.themeMode, themeMode);
     } catch {
       // ignore storage failures
     }
-  }, [nodeTypeFilters]);
+  }, [themeMode]);
 
   // G: initialize the layout worker once
   useEffect(() => {
@@ -285,7 +267,9 @@ function App() {
             id: node.id,
             label: node.label,
             kind: node.kind,
+            visualKind: node.visualKind,
             semanticType: node.semanticType,
+            status: node.status,
             depth: topology.depthByNodeId[id] ?? 0,
             x: manualPositions[id]?.x ?? pos?.x ?? centerX,
             y: manualPositions[id]?.y ?? pos?.y ?? centerY,
@@ -329,12 +313,215 @@ function App() {
       });
     };
 
-    Object.values(graphState.nodesById).forEach((node) => {
-      const semanticType = node.semanticType;
-      if (!semanticType) return;
-      if (nodeTypeFilters[semanticType]) return;
-      excludeSubtree(node.id);
+    const layerLinkedNodeIds = new Set<string>();
+    const planTargetNodeIds = new Set<string>();
+    const docsLinkedNodeIds = new Set<string>();
+    Object.values(graphState.edgesById).forEach((edge) => {
+      const relation = String(edge.label ?? "").toUpperCase();
+      if (relation === "BELONGS_TO_LAYER" || relation === "VIOLATES_RULE") {
+        layerLinkedNodeIds.add(edge.source);
+        layerLinkedNodeIds.add(edge.target);
+      }
+      if (relation === "TARGETS") {
+        planTargetNodeIds.add(edge.source);
+        planTargetNodeIds.add(edge.target);
+      }
+      if (relation === "DOC_DESCRIBES") {
+        docsLinkedNodeIds.add(edge.source);
+        docsLinkedNodeIds.add(edge.target);
+      }
     });
+
+    // Phase 1: Structure view filtering
+    if (viewMode === "structure") {
+      Object.values(graphState.nodesById).forEach((node) => {
+        if (node.id === rootNodeId) return;
+
+        const semanticType = node.semanticType;
+        const labels = node.labels || [];
+
+        const isStructureNode =
+          node.kind === "project" ||
+          node.kind === "structure" ||
+          node.kind === "code" ||
+          labels.some((label) => {
+            const value = String(label).toUpperCase();
+            return (
+              value === "FILE" ||
+              value === "FOLDER" ||
+              value === "FUNCTION" ||
+              value === "CLASS" ||
+              value === "IMPORT" ||
+              value === "EXPORT" ||
+              value === "VARIABLE" ||
+              value === "TEST_SUITE"
+            );
+          });
+
+        if (!isStructureNode) {
+          excludeSubtree(node.id);
+          return;
+        }
+
+        // Filter imports if showImports is false
+        if (semanticType === "import" && !structureFilters.showImports) {
+          excludeSubtree(node.id);
+          return;
+        }
+
+        // Filter exports if showExports is false
+        if (semanticType === "export" && !structureFilters.showExports) {
+          excludeSubtree(node.id);
+          return;
+        }
+
+        if (!structureFilters.showFiles) {
+          const isFileNode =
+            node.visualKind === "file" ||
+            labels.some((l) => String(l).toUpperCase() === "FILE");
+
+          if (isFileNode) {
+            excludeSubtree(node.id);
+            return;
+          }
+        }
+
+        // Filter test nodes if showTests is false
+        // Tests are identified by:
+        // - Labels containing "TEST", "test", "Test"
+        // - Node IDs containing "test" or "spec"
+        // - SemanticType indicating test relationship
+        if (!structureFilters.showTests) {
+          const isTestNode =
+            labels.some((l) => {
+              const labelStr = String(l).toLowerCase();
+              return labelStr.includes("test") || labelStr.includes("spec");
+            }) ||
+            node.id.toLowerCase().includes("test") ||
+            node.id.toLowerCase().includes("spec") ||
+            node.label.toLowerCase().includes(".test.") ||
+            node.label.toLowerCase().includes(".spec.");
+
+          if (isTestNode) {
+            excludeSubtree(node.id);
+            return;
+          }
+        }
+      });
+    }
+
+    if (viewMode === "architecture") {
+      Object.values(graphState.nodesById).forEach((node) => {
+        if (node.id === rootNodeId) return;
+
+        const isArchitectureNode =
+          node.kind === "architecture" ||
+          node.kind === "system" ||
+          node.kind === "code" ||
+          layerLinkedNodeIds.has(node.id);
+
+        if (!isArchitectureNode) {
+          excludeSubtree(node.id);
+          return;
+        }
+
+        if (
+          architectureFilters.showViolationsOnly &&
+          !(node.labels ?? []).some((label) =>
+            String(label).toLowerCase().includes("violation"),
+          )
+        ) {
+          excludeSubtree(node.id);
+        }
+      });
+    }
+
+    // Phase 4: Plan view filtering
+    if (viewMode === "plan") {
+      Object.values(graphState.nodesById).forEach((node) => {
+        if (node.id === rootNodeId) return;
+
+        const status = node.status;
+        const kind = node.kind;
+        const labels = node.labels || [];
+        const isProgressNode =
+          kind === "progress" ||
+          labels.some((label) => {
+            const value = String(label).toUpperCase();
+            return value === "FEATURE" || value === "TASK";
+          });
+
+        if (!isProgressNode) {
+          if (
+            planFilters.showImplementingFiles &&
+            planTargetNodeIds.has(node.id)
+          ) {
+            return;
+          }
+          excludeSubtree(node.id);
+          return;
+        }
+
+        // Only filter progress nodes (FEATURE, TASK)
+        if (status) {
+          // Filter by status
+          if (planFilters.statusFilter !== "all") {
+            if (status !== planFilters.statusFilter) {
+              excludeSubtree(node.id);
+              return;
+            }
+          }
+
+          // Filter by feature focus (if a specific feature is selected)
+          if (planFilters.featureFocusId) {
+            const isFeature = labels.includes("FEATURE");
+            const isMatchingFeature = node.id === planFilters.featureFocusId;
+
+            // Only show the selected feature and its related nodes
+            // For now, we'll keep all nodes if a feature is selected
+            // A more sophisticated implementation would check relationships
+            if (isFeature && !isMatchingFeature) {
+              excludeSubtree(node.id);
+              return;
+            }
+          }
+        }
+      });
+    }
+
+    if (viewMode === "documentation") {
+      Object.values(graphState.nodesById).forEach((node) => {
+        if (node.id === rootNodeId) return;
+
+        const labels = node.labels || [];
+        const kind = node.kind;
+        const isDocNode =
+          kind === "docs" ||
+          labels.some((label) => {
+            const value = String(label).toUpperCase();
+            return value === "DOCUMENT" || value === "SECTION";
+          });
+        const isLinkedCodeNode =
+          documentationFilters.showLinkedCode &&
+          (kind === "code" || kind === "structure") &&
+          docsLinkedNodeIds.has(node.id);
+
+        if (!isDocNode && !isLinkedCodeNode) {
+          excludeSubtree(node.id);
+          return;
+        }
+
+        if (documentationFilters.kindFilter !== "all" && isDocNode) {
+          const matchesKind = labels.some((label) => {
+            const value = String(label).toLowerCase();
+            return value === documentationFilters.kindFilter;
+          });
+          if (!matchesKind) {
+            excludeSubtree(node.id);
+          }
+        }
+      });
+    }
 
     const filteredNodesById = Object.entries(graphState.nodesById).reduce<
       Record<string, GraphNodeEntity>
@@ -348,7 +535,7 @@ function App() {
     const visibleNodeIds = new Set(Object.keys(filteredNodesById));
 
     const filteredEdgesById = Object.entries(graphState.edgesById).reduce<
-      typeof graphState.edgesById
+      Record<string, GraphEdgeEntity>
     >((acc, [edgeId, edge]) => {
       if (visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)) {
         acc[edgeId] = edge;
@@ -358,16 +545,11 @@ function App() {
 
     const filteredChildrenByParent = Object.entries(
       graphState.childIdsByParent,
-    ).reduce<typeof graphState.childIdsByParent>(
-      (acc, [parentId, childIds]) => {
-        if (!visibleNodeIds.has(parentId)) return acc;
-        acc[parentId] = childIds.filter((childId) =>
-          visibleNodeIds.has(childId),
-        );
-        return acc;
-      },
-      {},
-    );
+    ).reduce<Record<string, string[]>>((acc, [parentId, childIds]) => {
+      if (!visibleNodeIds.has(parentId)) return acc;
+      acc[parentId] = childIds.filter((childId) => visibleNodeIds.has(childId));
+      return acc;
+    }, {});
 
     // topology = synchronous BFS only, no force simulation (G)
     const topology = computeLayoutTopology({
@@ -392,7 +574,11 @@ function App() {
     graphState.rootNodeId,
     graphState.connectionDepth,
     graphState.siblingPageByParent,
-    nodeTypeFilters,
+    viewMode,
+    structureFilters,
+    planFilters,
+    architectureFilters,
+    documentationFilters,
   ]);
 
   // G: post to worker whenever topology changes
@@ -423,6 +609,12 @@ function App() {
     });
     return map;
   }, [filteredLayoutFrame.nodes]);
+
+  // Calculate filter stats for visual feedback
+  const totalNodes = Object.keys(graphState.nodesById).length;
+  const visibleNodes = pendingLayout
+    ? Object.keys(pendingLayout.filteredNodesById).length
+    : totalNodes;
 
   const activeProjectId = graphState.projectId ?? "";
   const selectedNodeId = graphState.selectedNodeId;
@@ -500,6 +692,24 @@ function App() {
     return result;
   }, [filteredLayoutFrame.edges, selectedNodeId]);
 
+  const mainParentNodeById = useMemo(() => {
+    const result: Record<string, boolean> = {};
+    const mainNodeId = graphState.focusedNodeId ?? graphState.rootNodeId;
+    if (!mainNodeId) return result;
+
+    filteredLayoutFrame.edges.forEach((edge) => {
+      if (edge.target === mainNodeId) {
+        result[edge.source] = true;
+      }
+    });
+
+    return result;
+  }, [
+    filteredLayoutFrame.edges,
+    graphState.focusedNodeId,
+    graphState.rootNodeId,
+  ]);
+
   // F: collectDragPropagationUpdates reads adjacency from store (no useMemo rebuild)
   const collectDragPropagationUpdates = (params: {
     nodeId: string;
@@ -518,7 +728,7 @@ function App() {
     const snapshot = useGraphStore.getState();
     const sourceScale = getDepthVisual(sourceNode.depth).scale;
     const sourceCanvasWidth =
-      NODE_WIDTH_BY_KIND[sourceNode.kind] *
+      NODE_WIDTH_BY_KIND[sourceNode.visualKind] *
       sourceScale *
       snapshot.viewport.scale;
     const sourceDepth = depthById[nodeId] ?? sourceNode.depth;
@@ -762,11 +972,25 @@ function App() {
   }, [focusedNodeId, motionSpeedFactor, filteredLayoutFrame]); // B: no positionById
 
   return (
-    <main className="app-shell theme-neumorph">
+    <main
+      className={`app-shell ${themeMode === "dark" ? "theme-dark" : "theme-neumorph"}`}
+    >
       <header className="app-header">
         <div className="app-header-title-wrap">
           <LogoIcon size={26} className="app-header-logo" />
           <h1 className="app-header-title">Code Visual</h1>
+          <button
+            type="button"
+            role="switch"
+            aria-label="Toggle dark theme"
+            aria-checked={themeMode === "dark"}
+            className={`app-theme-toggle ${themeMode === "dark" ? "on" : "off"}`}
+            onClick={() => {
+              setThemeMode((mode) => (mode === "dark" ? "light" : "dark"));
+            }}
+          >
+            {themeMode === "dark" ? <FaMoon size={12} /> : <FaSun size={12} />}
+          </button>
           <span className={`app-header-chip ${connectionChip.tone}`}>
             {connectionChip.label}
           </span>
@@ -783,178 +1007,221 @@ function App() {
         <p className="hint error-text">Failed to load projects.</p>
       ) : null}
 
-      <GraphCanvas
-        frame={renderFrame}
-        viewport={graphState.viewport}
-        selectedNodeId={selectedNodeId}
-        lastVisitedNodeId={lastVisitedNodeId}
-        depthById={depthById}
-        loopBridgeNodeById={loopBridgeNodeById}
-        selectedRelativeNodeById={selectedRelativeNodeById}
-        selectedRelativeEdgeById={selectedRelativeEdgeById}
-        activeDraggedNodeId={activeDraggedNodeId}
-        controlsOverlay={
-          <CanvasControls
-            syncStatus={graphState.syncStatus}
-            isSyncing={isSyncing}
-            autoRefreshEnabled={autoRefreshEnabled}
-            connectionDepth={graphState.connectionDepth}
-            motionSpeedFactor={motionSpeedFactor}
-            nodeTypeFilters={nodeTypeFilters}
-            nodeTypeFilterOrder={NODE_TYPE_FILTERS}
-            onToggleAutoRefresh={() => setAutoRefreshEnabled((value) => !value)}
-            onDepthUp={increaseDepth}
-            onDepthDown={decreaseDepth}
-            onChangeMotion={setMotionSpeedFactor}
-            onToggleNodeTypeFilter={(type) => {
-              setNodeTypeFilters((current) => ({
-                ...current,
-                [type]: !current[type],
-              }));
+      <div className="workspace-split">
+        <div className="canvas-pane">
+          <GraphCanvas
+            frame={renderFrame}
+            viewport={graphState.viewport}
+            selectedNodeId={selectedNodeId}
+            lastVisitedNodeId={lastVisitedNodeId}
+            depthById={depthById}
+            loopBridgeNodeById={loopBridgeNodeById}
+            mainParentNodeById={mainParentNodeById}
+            selectedRelativeNodeById={selectedRelativeNodeById}
+            selectedRelativeEdgeById={selectedRelativeEdgeById}
+            activeDraggedNodeId={activeDraggedNodeId}
+            controlsOverlay={
+              <CanvasControls
+                syncStatus={graphState.syncStatus}
+                isSyncing={isSyncing}
+                autoRefreshEnabled={autoRefreshEnabled}
+                connectionDepth={graphState.connectionDepth}
+                motionSpeedFactor={motionSpeedFactor}
+                viewMode={viewMode}
+                structureFilters={structureFilters}
+                architectureFilters={architectureFilters}
+                planFilters={planFilters}
+                documentationFilters={documentationFilters}
+                onToggleAutoRefresh={() =>
+                  setAutoRefreshEnabled((value) => !value)
+                }
+                onDepthUp={increaseDepth}
+                onDepthDown={decreaseDepth}
+                onChangeMotion={setMotionSpeedFactor}
+                onChangeViewMode={setViewMode}
+                onToggleStructureFilter={(key) => {
+                  setStructureFilters({ [key]: !structureFilters[key] });
+                }}
+                onToggleArchitectureViewType={() => {
+                  setArchitectureFilters({
+                    viewType:
+                      architectureFilters.viewType === "layers"
+                        ? "communities"
+                        : "layers",
+                  });
+                }}
+                onToggleArchitectureViolationsOnly={() => {
+                  setArchitectureFilters({
+                    showViolationsOnly: !architectureFilters.showViolationsOnly,
+                  });
+                }}
+                onChangePlanStatusFilter={(status) => {
+                  setPlanFilters({ statusFilter: status });
+                }}
+                onTogglePlanImplementingFiles={() => {
+                  setPlanFilters({
+                    showImplementingFiles: !planFilters.showImplementingFiles,
+                  });
+                }}
+                onTogglePlanTestCoverage={() => {
+                  setPlanFilters({
+                    showTestCoverage: !planFilters.showTestCoverage,
+                  });
+                }}
+                onChangeDocKindFilter={(kind) => {
+                  setDocumentationFilters({ kindFilter: kind });
+                }}
+                onToggleDocLinkedCode={() => {
+                  setDocumentationFilters({
+                    showLinkedCode: !documentationFilters.showLinkedCode,
+                  });
+                }}
+              />
+            }
+            setCanvasRef={(node) => {
+              canvasRef.current = node;
+            }}
+            onCanvasContextMenu={(event) => {
+              event.preventDefault();
+            }}
+            onCanvasWheel={(event) => {
+              event.preventDefault();
+              graphState.zoom(
+                event.deltaY < 0 ? 1 : -1,
+                event.clientX,
+                event.clientY,
+              );
+            }}
+            onCanvasPointerDown={(event) => {
+              if (event.button !== 2) return;
+              stopCameraAnimation();
+              event.currentTarget.setPointerCapture(event.pointerId);
+              draggingRef.current = {
+                active: true,
+                x: event.clientX,
+                y: event.clientY,
+              };
+            }}
+            onCanvasPointerMove={(event) => {
+              if (nodeDragRef.current.active && nodeDragRef.current.nodeId) {
+                const nodeId = nodeDragRef.current.nodeId;
+                const snapshot = useGraphStore.getState();
+                const currentNodes = renderFrameRef.current.nodes;
+                const currentNode = currentNodes.find((n) => n.id === nodeId);
+                const currentPosition =
+                  snapshot.manualPositions[nodeId] ??
+                  (currentNode ? { x: currentNode.x, y: currentNode.y } : null);
+                if (!currentPosition) return;
+
+                const deltaX =
+                  (event.clientX - nodeDragRef.current.x) /
+                  graphState.viewport.scale;
+                const deltaY =
+                  (event.clientY - nodeDragRef.current.y) /
+                  graphState.viewport.scale;
+                nodeDragRef.current.x = event.clientX;
+                nodeDragRef.current.y = event.clientY;
+
+                if (Math.abs(deltaX) > 0.1 || Math.abs(deltaY) > 0.1) {
+                  nodeDragRef.current.moved = true;
+                }
+
+                const sourceNextPosition = {
+                  x: currentPosition.x + deltaX,
+                  y: currentPosition.y + deltaY,
+                };
+
+                const basePositionsById = currentNodes.reduce<
+                  Record<string, { x: number; y: number }>
+                >((acc, node) => {
+                  const manualPosition = snapshot.manualPositions[node.id];
+                  acc[node.id] = manualPosition ?? { x: node.x, y: node.y };
+                  return acc;
+                }, {});
+
+                basePositionsById[nodeId] = sourceNextPosition;
+
+                const neighborUpdates = collectDragPropagationUpdates({
+                  nodeId,
+                  deltaX,
+                  deltaY,
+                  sourcePosition: sourceNextPosition,
+                  basePositionsById,
+                });
+
+                const allPositionUpdates = {
+                  [nodeId]: sourceNextPosition,
+                  ...neighborUpdates,
+                };
+
+                graphState.setManualPositionsBatch(allPositionUpdates);
+
+                setFilteredLayoutFrame((prev) => {
+                  if (prev.nodes.length === 0) return prev;
+                  return {
+                    nodes: prev.nodes.map((n) => {
+                      const pos = allPositionUpdates[n.id];
+                      return pos ? { ...n, x: pos.x, y: pos.y } : n;
+                    }),
+                    edges: prev.edges,
+                  };
+                });
+
+                return;
+              }
+
+              if (!draggingRef.current.active) return;
+              const deltaX = event.clientX - draggingRef.current.x;
+              const deltaY = event.clientY - draggingRef.current.y;
+              draggingRef.current = {
+                active: true,
+                x: event.clientX,
+                y: event.clientY,
+              };
+              graphState.pan(deltaX, deltaY);
+            }}
+            onCanvasPointerUp={stopAllDragging}
+            onCanvasPointerCancel={stopAllDragging}
+            onCanvasPointerLeave={stopAllDragging}
+            onNodePointerDown={(nodeId, event) => {
+              if (event.button !== 0) return;
+              event.stopPropagation();
+              stopCameraAnimation();
+              event.currentTarget.setPointerCapture(event.pointerId);
+              nodeDragRef.current = {
+                active: true,
+                nodeId,
+                x: event.clientX,
+                y: event.clientY,
+                moved: false,
+              };
+              setActiveDraggedNodeId(nodeId);
+            }}
+            onNodePointerUp={(event) => {
+              event.stopPropagation();
+              stopAllDragging();
+            }}
+            onNodePointerCancel={(event) => {
+              event.stopPropagation();
+              stopAllDragging();
+            }}
+            onNodeClick={(nodeId) => {
+              if (suppressClickRef.current === nodeId) {
+                suppressClickRef.current = null;
+                return;
+              }
+
+              graphState.setSelectedNode(nodeId);
+            }}
+            onNodeDoubleClick={(nodeId) => {
+              graphState.setNodeExpanded(nodeId, true);
+              expandNode(nodeId);
             }}
           />
-        }
-        setCanvasRef={(node) => {
-          canvasRef.current = node;
-        }}
-        onCanvasContextMenu={(event) => {
-          event.preventDefault();
-        }}
-        onCanvasWheel={(event) => {
-          event.preventDefault();
-          graphState.zoom(
-            event.deltaY < 0 ? 1 : -1,
-            event.clientX,
-            event.clientY,
-          );
-        }}
-        onCanvasPointerDown={(event) => {
-          if (event.button !== 2) return;
-          stopCameraAnimation();
-          event.currentTarget.setPointerCapture(event.pointerId);
-          draggingRef.current = {
-            active: true,
-            x: event.clientX,
-            y: event.clientY,
-          };
-        }}
-        onCanvasPointerMove={(event) => {
-          if (nodeDragRef.current.active && nodeDragRef.current.nodeId) {
-            const nodeId = nodeDragRef.current.nodeId;
-            const snapshot = useGraphStore.getState();
-            const currentNodes = renderFrameRef.current.nodes;
-            const currentNode = currentNodes.find((n) => n.id === nodeId);
-            const currentPosition =
-              snapshot.manualPositions[nodeId] ??
-              (currentNode ? { x: currentNode.x, y: currentNode.y } : null);
-            if (!currentPosition) return;
+        </div>
 
-            const deltaX =
-              (event.clientX - nodeDragRef.current.x) /
-              graphState.viewport.scale;
-            const deltaY =
-              (event.clientY - nodeDragRef.current.y) /
-              graphState.viewport.scale;
-            nodeDragRef.current.x = event.clientX;
-            nodeDragRef.current.y = event.clientY;
-
-            if (Math.abs(deltaX) > 0.1 || Math.abs(deltaY) > 0.1) {
-              nodeDragRef.current.moved = true;
-            }
-
-            const sourceNextPosition = {
-              x: currentPosition.x + deltaX,
-              y: currentPosition.y + deltaY,
-            };
-
-            const basePositionsById = currentNodes.reduce<
-              Record<string, { x: number; y: number }>
-            >((acc, node) => {
-              const manualPosition = snapshot.manualPositions[node.id];
-              acc[node.id] = manualPosition ?? { x: node.x, y: node.y };
-              return acc;
-            }, {});
-
-            basePositionsById[nodeId] = sourceNextPosition;
-
-            const neighborUpdates = collectDragPropagationUpdates({
-              nodeId,
-              deltaX,
-              deltaY,
-              sourcePosition: sourceNextPosition,
-              basePositionsById,
-            });
-
-            const allPositionUpdates = {
-              [nodeId]: sourceNextPosition,
-              ...neighborUpdates,
-            };
-
-            graphState.setManualPositionsBatch(allPositionUpdates);
-
-            // Directly update filteredLayoutFrame for edge anchors during drag
-            setFilteredLayoutFrame((prev) => {
-              if (prev.nodes.length === 0) return prev;
-              return {
-                nodes: prev.nodes.map((n) => {
-                  const pos = allPositionUpdates[n.id];
-                  return pos ? { ...n, x: pos.x, y: pos.y } : n;
-                }),
-                edges: prev.edges,
-              };
-            });
-
-            return;
-          }
-
-          if (!draggingRef.current.active) return;
-          const deltaX = event.clientX - draggingRef.current.x;
-          const deltaY = event.clientY - draggingRef.current.y;
-          draggingRef.current = {
-            active: true,
-            x: event.clientX,
-            y: event.clientY,
-          };
-          graphState.pan(deltaX, deltaY);
-        }}
-        onCanvasPointerUp={stopAllDragging}
-        onCanvasPointerCancel={stopAllDragging}
-        onCanvasPointerLeave={stopAllDragging}
-        onNodePointerDown={(nodeId, event) => {
-          if (event.button !== 0) return;
-          event.stopPropagation();
-          stopCameraAnimation();
-          event.currentTarget.setPointerCapture(event.pointerId);
-          nodeDragRef.current = {
-            active: true,
-            nodeId,
-            x: event.clientX,
-            y: event.clientY,
-            moved: false,
-          };
-          setActiveDraggedNodeId(nodeId);
-        }}
-        onNodePointerUp={(event) => {
-          event.stopPropagation();
-          stopAllDragging();
-        }}
-        onNodePointerCancel={(event) => {
-          event.stopPropagation();
-          stopAllDragging();
-        }}
-        onNodeClick={(nodeId) => {
-          if (suppressClickRef.current === nodeId) {
-            suppressClickRef.current = null;
-            return;
-          }
-
-          graphState.setSelectedNode(nodeId);
-        }}
-        onNodeDoubleClick={(nodeId) => {
-          graphState.setNodeExpanded(nodeId, true);
-          expandNode(nodeId);
-        }}
-      />
+        <NodeViewer selectedNode={selectedNode} viewMode={viewMode} />
+      </div>
 
       <GraphFooter
         selectedNode={selectedNode}
@@ -963,6 +1230,9 @@ function App() {
         selectedPageCount={selectedPageCount}
         isSyncing={isSyncing}
         onChangeSiblingPage={changeSiblingPage}
+        viewMode={viewMode}
+        totalNodes={totalNodes}
+        visibleNodes={visibleNodes}
       />
     </main>
   );

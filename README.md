@@ -95,13 +95,20 @@ npm run preview
 
 ## 🔐 Environment
 
-| Variable                 | Default                       | Purpose                   |
-| ------------------------ | ----------------------------- | ------------------------- |
-| `VITE_MEMGRAPH_URL`      | `http://localhost:4000/query` | Frontend → proxy endpoint |
-| `MEMGRAPH_BOLT_URL`      | `bolt://localhost:7687`       | Proxy → Memgraph Bolt     |
-| `MEMGRAPH_BOLT_USER`     | _(empty)_                     | Bolt auth username        |
-| `MEMGRAPH_BOLT_PASSWORD` | _(empty)_                     | Bolt auth password        |
-| `MEMGRAPH_PROXY_PORT`    | `4000`                        | Local proxy port          |
+| Variable                    | Default                       | Purpose                                  |
+| --------------------------- | ----------------------------- | ---------------------------------------- |
+| `VITE_MEMGRAPH_URL`         | `http://localhost:4000/query` | Frontend → proxy endpoint                |
+| `VITE_MEMGRAPH_SCHEMA_MODE` | `full`                        | Schema adapter mode (`full` or `legacy`) |
+| `MEMGRAPH_BOLT_URL`         | `bolt://localhost:7687`       | Proxy → Memgraph Bolt                    |
+| `MEMGRAPH_BOLT_USER`        | _(empty)_                     | Bolt auth username                       |
+| `MEMGRAPH_BOLT_PASSWORD`    | _(empty)_                     | Bolt auth password                       |
+| `MEMGRAPH_PROXY_PORT`       | `4000`                        | Local proxy port                         |
+
+Schema mode notes:
+
+- `full` (default): enables expanded MCP schema mapping, temporal live filtering, and direction-aware edge handling.
+- `legacy`: fallback mode for older or non-standard Memgraph datasets.
+- On startup in `full` mode, the app runs a lightweight schema health check; if unsupported schema is detected, the UI shows a clear error and suggests `VITE_MEMGRAPH_SCHEMA_MODE=legacy`.
 
 Expected proxy response shape:
 
@@ -112,7 +119,7 @@ Expected proxy response shape:
 ## 🛠 Scripts
 
 - `npm run dev` — start Vite dev server
-- `npm run dev:server` — start Memgraph proxy server
+- `npm run proxy` — start Memgraph proxy server
 - `npm run dev:all` — run proxy + frontend concurrently
 - `npm run build` — type-check and production build
 - `npm run lint` — lint source files
@@ -143,5 +150,7 @@ Further reading:
 
 - **Disconnected / empty graph:** validate `MEMGRAPH_BOLT_URL` and `MEMGRAPH_PROXY_PORT`
 - **Network/CORS errors on `VITE_MEMGRAPH_URL`:** ensure proxy is running on configured host/port
+- **CORS error with status `(null)` on `http://localhost:4000/query`:** proxy is unreachable; run `npm run proxy` or `npm run dev:all`
+- **Schema compatibility error on startup:** set `VITE_MEMGRAPH_SCHEMA_MODE=legacy` and refresh
 - **Slower interaction on dense graphs:** reduce connection depth or narrow semantic filters
 - **Local build failures:** rerun `npm install` and then `npm run build`

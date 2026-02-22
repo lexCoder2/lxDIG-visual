@@ -145,12 +145,23 @@ export function useGraphController() {
       graphState.setProject(project.id, {
         id: project.rootNodeId,
         label: project.name,
-        kind: "layer",
+        kind: project.rootKind ?? "project",
+        visualKind: project.rootVisualKind ?? "layer",
       });
 
       void hydrateNeighborhoodToDepth(project.rootNodeId);
     }
   }, [graphState, hydrateNeighborhoodToDepth, projectsQuery.data]);
+
+  useEffect(() => {
+    if (!projectsQuery.isError) return;
+
+    const message =
+      projectsQuery.error instanceof Error
+        ? projectsQuery.error.message
+        : "Failed to load projects";
+    useGraphStore.getState().setSyncStatus("error", message);
+  }, [projectsQuery.error, projectsQuery.isError]);
 
   useEffect(() => {
     if (!autoRefreshEnabled) return;
@@ -185,7 +196,8 @@ export function useGraphController() {
     graphState.setProject(project.id, {
       id: project.rootNodeId,
       label: project.name,
-      kind: "layer",
+      kind: project.rootKind ?? "project",
+      visualKind: project.rootVisualKind ?? "layer",
     });
 
     void hydrateNeighborhoodToDepth(project.rootNodeId);

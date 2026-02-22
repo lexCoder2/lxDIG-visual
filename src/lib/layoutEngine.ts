@@ -173,8 +173,8 @@ function buildDepthRingRadius(params: {
     const depth = depthByNodeId[nodeId] ?? 0;
     const scale = getDepthVisual(depth).scale;
     const radius = Math.max(
-      (NODE_WIDTH_BY_KIND[node.kind] * scale) / 2,
-      (NODE_HEIGHT_BY_KIND[node.kind] * scale) / 2,
+      (NODE_WIDTH_BY_KIND[node.visualKind] * scale) / 2,
+      (NODE_HEIGHT_BY_KIND[node.visualKind] * scale) / 2,
     );
     maxRadiusByDepth[depth] = Math.max(maxRadiusByDepth[depth] ?? 0, radius);
     countByDepth[depth] = (countByDepth[depth] ?? 0) + 1;
@@ -258,8 +258,8 @@ export function computeForcePositions(
       const depth = depthByNodeId[nodeId] ?? 0;
       const depthVisual = getDepthVisual(depth);
       const sizeRadius = Math.max(
-        (NODE_WIDTH_BY_KIND[node.kind] * depthVisual.scale) / 2,
-        (NODE_HEIGHT_BY_KIND[node.kind] * depthVisual.scale) / 2,
+        (NODE_WIDTH_BY_KIND[node.visualKind] * depthVisual.scale) / 2,
+        (NODE_HEIGHT_BY_KIND[node.visualKind] * depthVisual.scale) / 2,
       );
       const childCount = (childIdsByParent[nodeId] ?? []).length;
       const depthNodes = nodesAtDepth[depth] ?? [];
@@ -469,6 +469,8 @@ export function computeLayoutTopology(
       source: edge.source,
       target: edge.target,
       label: edge.label,
+      relation: edge.relation,
+      direction: edge.direction,
     }));
 
   // build visible childIdsByParent, sorted for deterministic angles
@@ -521,7 +523,9 @@ export function computeLayoutFrame(input: LayoutInput): LayoutFrame {
       id: node.id,
       label: node.label,
       kind: node.kind,
+      visualKind: node.visualKind,
       semanticType: node.semanticType,
+      status: node.status,
       depth: topology.depthByNodeId[id] ?? 0,
       x: input.manualPositions[id]?.x ?? position?.x ?? centerX,
       y: input.manualPositions[id]?.y ?? position?.y ?? centerY,

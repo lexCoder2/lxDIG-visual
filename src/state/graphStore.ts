@@ -13,7 +13,13 @@ import type {
   GraphEdgeEntity,
   GraphNodeEntity,
   NodeKind,
+  VisualNodeKind,
+  ViewMode,
   ViewportState,
+  StructureFilters,
+  ArchitectureFilters,
+  PlanFilters,
+  DocumentationFilters,
 } from "../types/graph";
 
 type GraphStore = {
@@ -23,6 +29,11 @@ type GraphStore = {
   selectedNodeId: string | null;
   lastVisitedNodeId: string | null;
   connectionDepth: number;
+  viewMode: ViewMode;
+  structureFilters: StructureFilters;
+  architectureFilters: ArchitectureFilters;
+  planFilters: PlanFilters;
+  documentationFilters: DocumentationFilters;
   nodesById: Record<string, GraphNodeEntity>;
   edgesById: Record<string, GraphEdgeEntity>;
   childIdsByParent: Record<string, string[]>;
@@ -35,12 +46,23 @@ type GraphStore = {
   syncError?: string;
   setProject: (
     projectId: string,
-    rootNode: { id: string; label: string; kind?: NodeKind },
+    rootNode: {
+      id: string;
+      label: string;
+      kind?: NodeKind;
+      visualKind?: VisualNodeKind;
+      status?: string;
+    },
   ) => void;
   setSyncStatus: (status: GraphStore["syncStatus"], error?: string) => void;
   setSelectedNode: (nodeId: string | null) => void;
   setFocusedNode: (nodeId: string | null) => void;
   setConnectionDepth: (depth: number) => void;
+  setViewMode: (mode: ViewMode) => void;
+  setStructureFilters: (filters: Partial<StructureFilters>) => void;
+  setArchitectureFilters: (filters: Partial<ArchitectureFilters>) => void;
+  setPlanFilters: (filters: Partial<PlanFilters>) => void;
+  setDocumentationFilters: (filters: Partial<DocumentationFilters>) => void;
   setNodeLoading: (nodeId: string, loading: boolean, error?: string) => void;
   setNodeExpanded: (nodeId: string, expanded: boolean) => void;
   mergeExpansionPage: (params: {
@@ -69,8 +91,56 @@ type GraphStore = {
   zoom: (direction: number, pointerX: number, pointerY: number) => void;
 };
 
-function buildUndirectedEdgeId(a: string, b: string): string {
-  return a < b ? `${a}::${b}` : `${b}::${a}`;
+function buildDirectedEdgeId(params: {
+  source: string;
+  target: string;
+  relation?: string;
+}): string {
+  const relation = params.relation?.trim() || "RELATED_TO";
+  return `${params.source}::${relation}::${params.target}`;
+}
+
+function readViewModeFromStorage(): ViewMode {
+  if (typeof window === "undefined") return "structure";
+  try {
+    const stored = window.localStorage.getItem("code-visual:viewMode");
+    if (
+      stored === "structure" ||
+      stored === "architecture" ||
+      stored === "plan" ||
+      stored === "documentation"
+    ) {
+      return stored;
+    }
+    return "structure";
+  } catch {
+    return "structure";
+  }
+}
+
+function writeViewModeToStorage(mode: ViewMode): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem("code-visual:viewMode", mode);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function readConnectionDepthFromStorage(): number {
+  if (typeof window === "undefined") return DEFAULT_CONNECTION_DEPTH;
+  try {
+    const stored = window.localStorage.getItem("code-visual:connectionDepth");
+    if (!stored) return DEFAULT_CONNECTION_DEPTH;
+    const parsed = Math.round(Number(stored));
+    if (!Number.isFinite(parsed)) return DEFAULT_CONNECTION_DEPTH;
+    return Math.max(
+      MIN_CONNECTION_DEPTH,
+      Math.min(MAX_CONNECTION_DEPTH, parsed),
+    );
+  } catch {
+    return DEFAULT_CONNECTION_DEPTH;
+  }
 }
 
 export const useGraphStore = create<GraphStore>()(
@@ -80,7 +150,29 @@ export const useGraphStore = create<GraphStore>()(
     focusedNodeId: null,
     selectedNodeId: null,
     lastVisitedNodeId: null,
-    connectionDepth: DEFAULT_CONNECTION_DEPTH,
+    connectionDepth: readConnectionDepthFromStorage(),
+    viewMode: readViewModeFromStorage(),
+    structureFilters: {
+      showImports: true,
+      showExports: true,
+      showTests: true,
+      showFiles: false,
+    },
+    architectureFilters: {
+      viewType: "layers",
+      showViolationsOnly: false,
+      layerFocusId: null,
+    },
+    planFilters: {
+      statusFilter: "all",
+      featureFocusId: null,
+      showImplementingFiles: true,
+      showTestCoverage: true,
+    },
+    documentationFilters: {
+      kindFilter: "all",
+      showLinkedCode: true,
+    },
     nodesById: {},
     edgesById: {},
     childIdsByParent: {},
@@ -104,7 +196,9 @@ export const useGraphStore = create<GraphStore>()(
           [rootId]: {
             id: rootId,
             label: rootNode.label,
-            kind: rootNode.kind ?? "layer",
+            kind: rootNode.kind ?? "project",
+            visualKind: rootNode.visualKind ?? "layer",
+            status: rootNode.status,
             depth: 0,
             expanded: true,
             loading: false,
@@ -189,6 +283,37 @@ export const useGraphStore = create<GraphStore>()(
       });
     },
 
+    setViewMode(mode) {
+      set((draft) => {
+        draft.viewMode = mode;
+      });
+      writeViewModeToStorage(mode);
+    },
+
+    setStructureFilters(filters) {
+      set((draft) => {
+        Object.assign(draft.structureFilters, filters);
+      });
+    },
+
+    setArchitectureFilters(filters) {
+      set((draft) => {
+        Object.assign(draft.architectureFilters, filters);
+      });
+    },
+
+    setPlanFilters(filters) {
+      set((draft) => {
+        Object.assign(draft.planFilters, filters);
+      });
+    },
+
+    setDocumentationFilters(filters) {
+      set((draft) => {
+        Object.assign(draft.documentationFilters, filters);
+      });
+    },
+
     setNodeLoading(nodeId, loading, error) {
       set((draft) => {
         const current = draft.nodesById[nodeId];
@@ -212,7 +337,9 @@ export const useGraphStore = create<GraphStore>()(
         const parent = draft.nodesById[parentId];
         if (!parent) return;
 
-        const existingChildIds = new Set(draft.childIdsByParent[parentId] ?? []);
+        const existingChildIds = new Set(
+          draft.childIdsByParent[parentId] ?? [],
+        );
 
         children.forEach((child) => {
           if (!draft.nodesById[child.id]) {
@@ -220,7 +347,10 @@ export const useGraphStore = create<GraphStore>()(
               id: child.id,
               label: child.label,
               kind: child.kind,
+              visualKind: child.visualKind,
               semanticType: child.semanticType,
+              labels: child.labels,
+              status: child.status,
               depth: parent.depth + 1,
               parentId,
               expanded: false,
@@ -230,13 +360,20 @@ export const useGraphStore = create<GraphStore>()(
 
           existingChildIds.add(child.id);
 
-          const edgeId = buildUndirectedEdgeId(parentId, child.id);
+          const relation = child.relation;
+          const edgeId = buildDirectedEdgeId({
+            source: parentId,
+            target: child.id,
+            relation,
+          });
           if (!draft.edgesById[edgeId]) {
             draft.edgesById[edgeId] = {
               id: edgeId,
               source: parentId,
               target: child.id,
-              label: child.relation,
+              label: relation,
+              relation,
+              direction: child.relationDirection ?? "undirected",
             };
           }
 
@@ -283,7 +420,10 @@ export const useGraphStore = create<GraphStore>()(
                 id: child.id,
                 label: child.label,
                 kind: child.kind,
+                visualKind: child.visualKind,
                 semanticType: child.semanticType,
+                labels: child.labels,
+                status: child.status,
                 depth: parent.depth + 1,
                 parentId: entry.parentId,
                 expanded: false,
@@ -293,13 +433,20 @@ export const useGraphStore = create<GraphStore>()(
 
             childIds.push(child.id);
 
-            const edgeId = buildUndirectedEdgeId(entry.parentId, child.id);
+            const relation = child.relation;
+            const edgeId = buildDirectedEdgeId({
+              source: entry.parentId,
+              target: child.id,
+              relation,
+            });
             if (!draft.edgesById[edgeId]) {
               draft.edgesById[edgeId] = {
                 id: edgeId,
                 source: entry.parentId,
                 target: child.id,
-                label: child.relation,
+                label: relation,
+                relation,
+                direction: child.relationDirection ?? "undirected",
               };
             }
 
